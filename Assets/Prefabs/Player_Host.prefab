@@ -310,7 +310,7 @@ MonoBehaviour:
   RotationMaxInterpolationTime: 0.1
   ScaleLerpSmoothing: 1
   ScaleMaxInterpolationTime: 0.1
-  AuthorityMode: 0
+  AuthorityMode: 1
   TickSyncChildren: 0
   UseUnreliableDeltas: 0
   SyncPositionX: 1
@@ -362,6 +362,7 @@ MonoBehaviour:
       MaxSecondsBetweenUpdates: 0
     m_InternalValue: 0
   smokeEffect: {fileID: 2875046477161170494, guid: e49431c251da5194faf8a6244b7e65a1, type: 3}
+  smokeEffectLifetime: 3.5
 --- !u!114 &-8733751220468728954
 MonoBehaviour:
   m_ObjectHideFlags: 0

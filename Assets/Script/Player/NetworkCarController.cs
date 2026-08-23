@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -48,6 +49,7 @@ public class NetworkCarController : NetworkBehaviour
     private Coroutine jumpCoroutine;
     private ShadowJump spawnedShadow;
     private bool canJump = false; // Jump unlocked strictly upon contact with JumpTrigger
+    private bool isJumping = false; // Prevents tyre mark spawning while airborne
     private float nextJumpTime = 0f;
 
     [Header("Jump Collision")]
@@ -94,9 +96,8 @@ public class NetworkCarController : NetworkBehaviour
     private InputAction fallbackMoveAction;
     private InputAction fallbackBoostAction;
 
-    // Server-authoritative physics state
+    // Owner-authoritative physics state
     private bool isBoosted = false;
-    private float pendingTurnInput = 0f;
     public bool hasWonPlayer { get; private set; } = false;
 
     private InputAction MoveInput => moveAction != null ? moveAction.action : fallbackMoveAction;
@@ -113,6 +114,7 @@ public class NetworkCarController : NetworkBehaviour
         originalCarScale = transform.localScale;
         currentSpeed = speed;
         canJump = false;
+        isJumping = false;
 
         CreateFallbackActions();
         InitializeTyrePositions();
@@ -121,19 +123,20 @@ public class NetworkCarController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         canJump = false;
+        isJumping = false;
 
         if (rb != null)
         {
             rb.simulated = true;
             rb.interpolation = RigidbodyInterpolation2D.Interpolate;
 
-            // Server-authoritative physics: only Server simulates Rigidbody2D dynamics
-            rb.bodyType = IsServer ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
+            // Owner-authoritative physics: Owner simulates Dynamic Rigidbody2D dynamics, remote clients stay Kinematic
+            rb.bodyType = (IsOwner || IsLocalPlayer) ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
         }
 
         if (healthComp != null)
         {
-            healthComp.OnRespawn += ResetCarBoostState;
+            healthComp.OnRespawn += ResetCarBoostStateLocal;
         }
 
         isHostCarNet.OnValueChanged += OnHostCarStateChanged;
@@ -144,7 +147,7 @@ public class NetworkCarController : NetworkBehaviour
         }
 
         ApplyCarVisuals(isHostCarNet.Value);
-        ResetCarBoostState();
+        ResetCarBoostStateRpc();
 
         if (IsOwner || IsLocalPlayer)
         {
@@ -170,7 +173,7 @@ public class NetworkCarController : NetworkBehaviour
 
         if (healthComp != null)
         {
-            healthComp.OnRespawn -= ResetCarBoostState;
+            healthComp.OnRespawn -= ResetCarBoostStateLocal;
         }
 
         if (IsOwner || IsLocalPlayer)
@@ -217,18 +220,48 @@ public class NetworkCarController : NetworkBehaviour
         }
     }
 
-    public void ResetCarBoostState()
+    [Rpc(SendTo.Everyone)]
+    public void TeleportCarRpc(Vector3 position, Quaternion rotation)
+    {
+        NetworkTransform netTransform = GetComponent<NetworkTransform>();
+        if (netTransform != null)
+        {
+            netTransform.Teleport(position, rotation, transform.localScale);
+        }
+        else
+        {
+            transform.position = position;
+            transform.rotation = rotation;
+        }
+
+        if (rb != null)
+        {
+            rb.position = position;
+            rb.rotation = rotation.eulerAngles.z;
+            rb.linearVelocity = Vector2.zero;
+            rb.angularVelocity = 0f;
+        }
+    }
+
+    [Rpc(SendTo.Everyone)]
+    public void ResetCarBoostStateRpc()
+    {
+        ResetCarBoostStateLocal();
+    }
+
+    public void ResetCarBoostStateLocal()
     {
         hasWonPlayer = false;
         isBoosted = false;
         canJump = false;
+        isJumping = false;
         currentSpeed = speed;
         boostCooldownTimer = 0f;
         nextJumpTime = 0f;
 
         if (rb != null)
         {
-            rb.bodyType = IsServer ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
+            rb.bodyType = (IsOwner || IsLocalPlayer) ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
             rb.simulated = true;
             rb.linearVelocity = Vector2.zero;
             rb.angularVelocity = 0f;
@@ -246,6 +279,18 @@ public class NetworkCarController : NetworkBehaviour
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
         if (healthComp != null && healthComp.isDead.Value) return;
+
+        // Stop all controls when TimeOver UI is displayed
+        if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value)
+        {
+            isBoosted = false;
+            if (rb != null)
+            {
+                rb.linearVelocity = Vector2.zero;
+                rb.angularVelocity = 0f;
+            }
+            return;
+        }
 
         // Boost Input Check: ONLY X Key (Keyboard) or Gamepad buttonSouth (A/Cross)
         bool boostPressed = false;
@@ -271,8 +316,7 @@ public class NetworkCarController : NetworkBehaviour
 
         if (boostPressed)
         {
-            Debug.Log($"[NetworkCarController SUCCESS] Boost Triggered by Local Player (IsOwner: {IsOwner})");
-            RequestBoostServerRpc();
+            TriggerBoostLocal();
         }
 
         // Jump Input Check: ONLY Spacebar (Keyboard) or Gamepad buttonNorth (Y/Triangle)
@@ -303,10 +347,39 @@ public class NetworkCarController : NetworkBehaviour
         }
     }
 
+    private void TriggerBoostLocal()
+    {
+        if (!IsOwner && !IsLocalPlayer) return;
+
+        if (!isBoosted)
+        {
+            // First press: Starts car movement at normal base speed without applying speed boost amount
+            Debug.Log($"[NetworkCarController SUCCESS] Car Movement Started by Local Player (IsOwner: {IsOwner})");
+            isBoosted = true;
+            currentSpeed = speed;
+            boostCooldownTimer = speedBoostInterval;
+            NotifyBoostStartedRpc();
+        }
+        else if (boostCooldownTimer <= 0f)
+        {
+            // Subsequent presses: Triggers speed boost burst
+            Debug.Log($"[NetworkCarController SUCCESS] Speed Boost Burst Triggered by Local Player (IsOwner: {IsOwner})");
+            if (speedBoostCoroutine != null) StopCoroutine(speedBoostCoroutine);
+            speedBoostCoroutine = StartCoroutine(SpeedBoostEffect());
+        }
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    private void NotifyBoostStartedRpc()
+    {
+        // Shared state notification to server
+    }
+
     private void TryExecuteJump()
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (!isBoosted || (healthComp != null && healthComp.isDead.Value) || hasWonPlayer) return;
+        if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value) return;
 
         if (!canJump)
         {
@@ -329,30 +402,21 @@ public class NetworkCarController : NetworkBehaviour
 
     private void FixedUpdate()
     {
-        // 1. Non-host owner reads local input and sends unreliable turn RPC to server (~50/s)
-        if ((IsOwner || IsLocalPlayer) && !IsServer)
-        {
-            float turn = (hasWonPlayer || (healthComp != null && healthComp.isDead.Value)) ? 0f : ReadTurnInput();
-            SubmitTurnInputServerRpc(turn);
-        }
-
-        // 2. Server simulates physics movement authoritatively
-        if (IsServer)
-        {
-            ApplyServerMovement();
-        }
-    }
-
-    [Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable, InvokePermission = RpcInvokePermission.Everyone)]
-    private void SubmitTurnInputServerRpc(float turn)
-    {
-        pendingTurnInput = turn;
-    }
-
-    private void ApplyServerMovement()
-    {
+        // Owner drives physics simulation locally with zero input latency
+        if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
         if (healthComp != null && healthComp.isDead.Value) return;
+
+        if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value)
+        {
+            isBoosted = false;
+            if (rb != null)
+            {
+                rb.linearVelocity = Vector2.zero;
+                rb.angularVelocity = 0f;
+            }
+            return;
+        }
 
         if (boostCooldownTimer > 0f)
         {
@@ -374,7 +438,7 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        float turn = IsOwner ? ReadTurnInput() : pendingTurnInput;
+        float turn = ReadTurnInput();
         float absTurn = Mathf.Abs(turn);
 
         float turnBoost = Mathf.Lerp(1f, driftTurnMultiplier, absTurn);
@@ -405,31 +469,9 @@ public class NetworkCarController : NetworkBehaviour
         UpdateTyreMarks(turn);
     }
 
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    private void RequestBoostServerRpc()
-    {
-        if (!isBoosted)
-        {
-            isBoosted = true;
-            SyncBoostClientRpc();
-        }
-        else if (boostCooldownTimer <= 0f)
-        {
-            if (speedBoostCoroutine != null) StopCoroutine(speedBoostCoroutine);
-            speedBoostCoroutine = StartCoroutine(SpeedBoostEffect());
-        }
-    }
-
-    [ClientRpc]
-    private void SyncBoostClientRpc()
-    {
-        isBoosted = true;
-    }
-
     private void OnBoostPerformed(InputAction.CallbackContext context)
     {
-        if (!IsOwner && !IsLocalPlayer) return;
-        RequestBoostServerRpc();
+        TriggerBoostLocal();
     }
 
     private IEnumerator SpeedBoostEffect()
@@ -460,26 +502,30 @@ public class NetworkCarController : NetworkBehaviour
 
     private IEnumerator JumpEffect()
     {
+        isJumping = true;
+
         if (jumpEffectPrefab != null)
         {
-            spawnedJumpEffect = Instantiate(
+            GameObject jumpFX = Instantiate(
                 jumpEffectPrefab,
                 transform.position,
                 Quaternion.identity
             );
+            Destroy(jumpFX, jumpDuration + 0.5f);
         }
 
         if (shadowPrefab != null)
         {
-            spawnedShadow = Instantiate(
+            ShadowJump shadowObj = Instantiate(
                 shadowPrefab,
                 transform.position,
                 Quaternion.identity
             );
 
-            if (spawnedShadow != null)
+            if (shadowObj != null)
             {
-                spawnedShadow.Initialize(transform, jumpDuration);
+                shadowObj.Initialize(transform, jumpDuration);
+                Destroy(shadowObj.gameObject, jumpDuration + 0.2f);
             }
         }
 
@@ -532,15 +578,7 @@ public class NetworkCarController : NetworkBehaviour
             boxCollider.gameObject.layer = playerLayer;
         }
 
-        if (spawnedShadow != null)
-        {
-            Destroy(spawnedShadow.gameObject);
-        }
-
-        if (spawnedJumpEffect != null)
-        {
-            Destroy(spawnedJumpEffect);
-        }
+        isJumping = false;
     }
 
     public void ApplyBoundaryDrift()
@@ -656,6 +694,9 @@ public class NetworkCarController : NetworkBehaviour
 
     private void UpdateTyreMarks(float turn)
     {
+        // Disable tyre marks while airborne / jumping
+        if (isJumping || (boxCollider != null && boxCollider.gameObject.layer == jumpCollisionLayer)) return;
+
         if (Mathf.Abs(turn) < 0.35f) return;
 
         float sidewaysVelocity = GetSidewaysVelocity();
@@ -676,9 +717,9 @@ public class NetworkCarController : NetworkBehaviour
 
     private void UpdateTyreMark(Transform tyre, ref Vector2 lastPosition, ref float distance)
     {
-        if (!IsServer) return;
+        if (tyre == null || (!IsOwner && !IsLocalPlayer)) return;
 
-        Vector2 currentPosition = (tyre != null) ? (Vector2)tyre.position : (Vector2)transform.position;
+        Vector2 currentPosition = tyre.position;
         distance += Vector2.Distance(currentPosition, lastPosition);
 
         if (distance >= tyreMarkSpacing)

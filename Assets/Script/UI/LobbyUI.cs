@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Threading.Tasks;
 using TMPro;
@@ -42,6 +43,11 @@ public class LobbyUI : MonoBehaviour
 
         Instance = this;
 
+        if (menuButtonAnimator == null)
+        {
+            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+        }
+
         if (joinCodeInput != null)
         {
             joinCodeInput.characterLimit = 15;
@@ -51,6 +57,11 @@ public class LobbyUI : MonoBehaviour
 
     private void OnEnable()
     {
+        if (menuButtonAnimator == null)
+        {
+            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+        }
+
         if (createRoomButton != null) createRoomButton.onClick.AddListener(OnCreateRoomClicked);
         if (joinRoomButton != null) joinRoomButton.onClick.AddListener(OpenJoinUI);
         if (joinGameButton != null) joinGameButton.onClick.AddListener(OnJoinGameButtonClicked);
@@ -105,6 +116,27 @@ public class LobbyUI : MonoBehaviour
 
     public void OpenJoinUI()
     {
+        StartCoroutine(OpenJoinUIRoutine());
+    }
+
+    private IEnumerator OpenJoinUIRoutine()
+    {
+        if (menuButtonAnimator == null)
+        {
+            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+        }
+
+        if (menuButtonAnimator != null)
+        {
+            menuButtonAnimator.PlayPressAnimation();
+            yield return menuButtonAnimator.WaitForPlayAnimation();
+        }
+
+        ExecuteOpenJoinUI();
+    }
+
+    private void ExecuteOpenJoinUI()
+    {
         if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
         if (lobbyPanel != null) lobbyPanel.SetActive(true);
 
@@ -135,7 +167,28 @@ public class LobbyUI : MonoBehaviour
         OpenJoinUI();
     }
 
-    private async void OnCreateRoomClicked()
+    private void OnCreateRoomClicked()
+    {
+        StartCoroutine(CreateRoomRoutine());
+    }
+
+    private IEnumerator CreateRoomRoutine()
+    {
+        if (menuButtonAnimator == null)
+        {
+            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+        }
+
+        if (menuButtonAnimator != null)
+        {
+            menuButtonAnimator.PlayPressAnimation();
+            yield return menuButtonAnimator.WaitForPlayAnimation();
+        }
+
+        ExecuteCreateRoom();
+    }
+
+    private async void ExecuteCreateRoom()
     {
         if (RelayManager.Instance == null)
         {
@@ -217,12 +270,6 @@ public class LobbyUI : MonoBehaviour
 
     private IEnumerator StartMatchRoutine()
     {
-        if (menuButtonAnimator != null)
-        {
-            menuButtonAnimator.PlayPressAnimation();
-            yield return menuButtonAnimator.WaitForPlayAnimation();
-        }
-
         if (NetworkRaceManager.Instance != null)
         {
             NetworkRaceManager.Instance.StartCountdownServer();
@@ -236,6 +283,8 @@ public class LobbyUI : MonoBehaviour
         {
             UnityEngine.SceneManagement.SceneManager.LoadScene("Level 1");
         }
+
+        yield break;
     }
 
     private void OnLeaveRoomClicked()
@@ -243,6 +292,11 @@ public class LobbyUI : MonoBehaviour
         if (RelayManager.Instance != null)
         {
             RelayManager.Instance.ShutdownSession();
+        }
+
+        if (menuButtonAnimator == null)
+        {
+            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
         }
 
         if (menuButtonAnimator != null)
@@ -270,10 +324,19 @@ public class LobbyUI : MonoBehaviour
             BroadcastPlayerCountServer();
         }
 
-        if (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsConnectedClient && !NetworkManager.Singleton.IsHost)
+        if (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsServer && !NetworkManager.Singleton.IsConnectedClient)
         {
+            if (menuButtonAnimator == null)
+            {
+                menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+            }
+
+            if (menuButtonAnimator != null)
+            {
+                menuButtonAnimator.ResetMenuAnimation();
+            }
             ShowMainMenuPanel();
-            UpdateStatusText("Disconnected from host.");
+            UpdateStatusText("Disconnected from Host.");
         }
     }
 
@@ -286,6 +349,16 @@ public class LobbyUI : MonoBehaviour
 
     private void ShowMainMenuPanel()
     {
+        if (menuButtonAnimator == null)
+        {
+            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+        }
+
+        if (menuButtonAnimator != null)
+        {
+            menuButtonAnimator.ResetMenuAnimation();
+        }
+
         if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
         if (lobbyPanel != null) lobbyPanel.SetActive(false);
 

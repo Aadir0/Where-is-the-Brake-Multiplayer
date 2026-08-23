@@ -22,6 +22,7 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private Animator carAnimator;
     [SerializeField] private Animator panelAnim;
     [SerializeField] private string selectedBoolPrefix = "isSelected";
+    [SerializeField] private string playBoolName = "Play";
     [SerializeField] private string playTriggerName = "Play";
     [SerializeField] private string playStateName = "Play";
     [SerializeField] private AnimationClip playAnimation;
@@ -91,6 +92,13 @@ public class JustAButton : MonoBehaviour
     public void HostGame()
     {
         if (hostGameButton != null) AnimateButtonPress(hostGameButton);
+        StartCoroutine(HostGameRoutine());
+    }
+
+    private IEnumerator HostGameRoutine()
+    {
+        PlayPressAnimation();
+        yield return StartCoroutine(WaitForPlayAnimation());
         if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.CreateRoom();
@@ -100,6 +108,13 @@ public class JustAButton : MonoBehaviour
     public void JoinGame()
     {
         if (joinGameButton != null) AnimateButtonPress(joinGameButton);
+        StartCoroutine(JoinGameRoutine());
+    }
+
+    private IEnumerator JoinGameRoutine()
+    {
+        PlayPressAnimation();
+        yield return StartCoroutine(WaitForPlayAnimation());
         if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.OpenJoinUI();
@@ -486,62 +501,77 @@ public class JustAButton : MonoBehaviour
     {
         isBusy = true;
 
-        if (carAnimator != null)
-        {
-            if (!string.IsNullOrEmpty(playTriggerName) &&
-                HasAnimatorParameter(
-                    carAnimator,
-                    playTriggerName,
-                    AnimatorControllerParameterType.Trigger))
-            {
-                carAnimator.SetTrigger(playTriggerName);
-            }
-            else if (!string.IsNullOrEmpty(playStateName))
-            {
-                carAnimator.Play(
-                    playStateName,
-                    0,
-                    0f
-                );
-            }
-        }
-
-        if (panelAnim != null)
-        {
-            if (!string.IsNullOrEmpty(playTriggerName) &&
-                HasAnimatorParameter(
-                    panelAnim,
-                    playTriggerName,
-                    AnimatorControllerParameterType.Trigger))
-            {
-                panelAnim.SetTrigger(playTriggerName);
-            }
-            else if (!string.IsNullOrEmpty(playStateName))
-            {
-                panelAnim.Play(
-                    playStateName,
-                    0,
-                    0f
-                );
-            }
-        }
+        SetAnimatorBool(carAnimator, playBoolName, true);
+        SetAnimatorBool(panelAnim, playBoolName, true);
+        SetAnimatorBool(anim, playBoolName, true);
     }
 
     public void ResetMenuAnimation()
     {
         isBusy = false;
 
-        if (carAnimator != null)
-        {
-            carAnimator.Rebind();
-            carAnimator.Update(0f);
-        }
+        SetAnimatorBool(carAnimator, playBoolName, false);
+        SetAnimatorBool(panelAnim, playBoolName, false);
+        SetAnimatorBool(anim, playBoolName, false);
 
-        if (panelAnim != null)
+        SafeResetAnimator(carAnimator);
+        SafeResetAnimator(panelAnim);
+        SafeResetAnimator(anim);
+    }
+
+    private void SetAnimatorBool(Animator animator, string boolName, bool value)
+    {
+        if (animator == null || string.IsNullOrEmpty(boolName)) return;
+
+        if (HasAnimatorParameter(animator, boolName, AnimatorControllerParameterType.Bool))
         {
-            panelAnim.Rebind();
-            panelAnim.Update(0f);
+            animator.SetBool(boolName, value);
         }
+        else if (value)
+        {
+            if (HasAnimatorParameter(animator, playTriggerName, AnimatorControllerParameterType.Trigger))
+            {
+                animator.SetTrigger(playTriggerName);
+            }
+            else if (!string.IsNullOrEmpty(playStateName))
+            {
+                try { animator.Play(playStateName, 0, 0f); } catch { }
+            }
+        }
+        else
+        {
+            if (HasAnimatorParameter(animator, playTriggerName, AnimatorControllerParameterType.Trigger))
+            {
+                animator.ResetTrigger(playTriggerName);
+            }
+        }
+    }
+
+    private void SafeResetAnimator(Animator animator)
+    {
+        if (animator == null) return;
+
+        try
+        {
+            if (!string.IsNullOrEmpty(playTriggerName) && HasAnimatorParameter(animator, playTriggerName, AnimatorControllerParameterType.Trigger))
+            {
+                animator.ResetTrigger(playTriggerName);
+            }
+
+            if (HasAnimatorParameter(animator, "Reset", AnimatorControllerParameterType.Trigger))
+            {
+                animator.SetTrigger("Reset");
+            }
+
+            animator.Rebind();
+
+            if (animator.gameObject.activeInHierarchy && animator.enabled)
+            {
+                animator.Play(0, 0, 0f);
+                animator.Update(0f);
+            }
+        }
+        catch { }
     }
 
     public IEnumerator WaitForPlayAnimation()

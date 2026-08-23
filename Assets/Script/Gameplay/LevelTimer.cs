@@ -4,6 +4,7 @@ using TMPro;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 public class LevelTimer : NetworkBehaviour
@@ -118,6 +119,26 @@ public class LevelTimer : NetworkBehaviour
             {
                 timerRunning = false;
                 isTimeOver.Value = true;
+            }
+        }
+
+        // Listen for Gamepad buttonSouth / Spacebar / Enter to click MainMenu button when TimeOver UI is displayed
+        if (isTimeOver.Value)
+        {
+            bool confirmPressed = false;
+            if (Keyboard.current != null && (Keyboard.current.spaceKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame))
+            {
+                confirmPressed = true;
+            }
+
+            if (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame)
+            {
+                confirmPressed = true;
+            }
+
+            if (confirmPressed)
+            {
+                OnMainMenuButtonClicked();
             }
         }
     }

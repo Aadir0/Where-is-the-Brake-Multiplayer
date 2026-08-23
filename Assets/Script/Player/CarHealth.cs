@@ -15,6 +15,7 @@ public class CarHealth : NetworkBehaviour
 
     [Header("Death Effects")]
     [SerializeField] private GameObject smokeEffect;
+    [SerializeField] private float smokeEffectLifetime = 3.5f;
 
     public bool isInvulnerableDuringSpawn { get; set; } = false;
 
@@ -79,13 +80,21 @@ public class CarHealth : NetworkBehaviour
 
     private void OnTriggerEnter2D(Collider2D other)
     {
-        if (!IsServer) return;
+        // Owner's own collider detects real-time trap contact
+        if (!IsOwner && !IsLocalPlayer) return;
         if (isDead.Value || isInvulnerableDuringSpawn) return;
 
         if (other.CompareTag("Trap") || other.CompareTag("Hole"))
         {
-            TakeDamageServer(maxHealth);
+            RequestTakeDamageRpc(maxHealth);
+            PlayDeathEffectsRpc(transform.position);
         }
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    private void RequestTakeDamageRpc(int amount)
+    {
+        TakeDamageServer(amount);
     }
 
     public void TakeDamageServer(int amount)
@@ -102,8 +111,24 @@ public class CarHealth : NetworkBehaviour
     private void DieServerAuthoritative()
     {
         if (!IsServer || isInvulnerableDuringSpawn) return;
+
         isDead.Value = true;
         deathCount.Value++;
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void PlayDeathEffectsRpc(Vector3 deathPosition)
+    {
+        if (smokeEffect != null)
+        {
+            GameObject smokeObj = Instantiate(smokeEffect, deathPosition, Quaternion.identity);
+            Destroy(smokeObj, smokeEffectLifetime);
+        }
+
+        if (DeathMarkerManager.Instance != null)
+        {
+            DeathMarkerManager.Instance.SpawnDeathMarker(deathPosition);
+        }
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -140,16 +165,6 @@ public class CarHealth : NetworkBehaviour
             rb.angularVelocity = 0f;
         }
         if (spriteRenderer != null) spriteRenderer.enabled = false;
-
-        if (smokeEffect != null)
-        {
-            Instantiate(smokeEffect, transform.position, Quaternion.identity);
-        }
-
-        if (DeathMarkerManager.Instance != null)
-        {
-            DeathMarkerManager.Instance.SpawnDeathMarker(transform.position);
-        }
 
         if (IsOwner)
         {
