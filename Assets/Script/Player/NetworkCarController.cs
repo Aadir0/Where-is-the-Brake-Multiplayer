@@ -38,7 +38,7 @@ public class NetworkCarController : NetworkBehaviour
     [Header("Jump Effect")]
     [SerializeField] private InputActionReference JumpAction;
     [SerializeField] private float jumpDuration = 0.3f;
-    [SerializeField] private float jumpCooldown = 1f;
+    [SerializeField] private float jumpCooldown = 1.5f;
     [SerializeField] private float carJumpScale = 0.8f;
     [SerializeField] private ShadowJump shadowPrefab;
     [SerializeField] private GameObject jumpEffectPrefab;
@@ -47,7 +47,7 @@ public class NetworkCarController : NetworkBehaviour
     private Vector3 originalCarScale;
     private Coroutine jumpCoroutine;
     private ShadowJump spawnedShadow;
-    private bool canJump = false;
+    private bool canJump = false; // Jump unlocked strictly upon contact with JumpTrigger
     private float nextJumpTime = 0f;
 
     [Header("Jump Collision")]
@@ -94,7 +94,9 @@ public class NetworkCarController : NetworkBehaviour
     private InputAction fallbackMoveAction;
     private InputAction fallbackBoostAction;
 
+    // Server-authoritative physics state
     private bool isBoosted = false;
+    private float pendingTurnInput = 0f;
     public bool hasWonPlayer { get; private set; } = false;
 
     private InputAction MoveInput => moveAction != null ? moveAction.action : fallbackMoveAction;
@@ -110,6 +112,7 @@ public class NetworkCarController : NetworkBehaviour
 
         originalCarScale = transform.localScale;
         currentSpeed = speed;
+        canJump = false;
 
         CreateFallbackActions();
         InitializeTyrePositions();
@@ -117,11 +120,15 @@ public class NetworkCarController : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        canJump = false;
+
         if (rb != null)
         {
-            rb.bodyType = RigidbodyType2D.Dynamic;
             rb.simulated = true;
             rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+
+            // Server-authoritative physics: only Server simulates Rigidbody2D dynamics
+            rb.bodyType = IsServer ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
         }
 
         if (healthComp != null)
@@ -214,16 +221,24 @@ public class NetworkCarController : NetworkBehaviour
     {
         hasWonPlayer = false;
         isBoosted = false;
+        canJump = false;
         currentSpeed = speed;
         boostCooldownTimer = 0f;
+        nextJumpTime = 0f;
 
         if (rb != null)
         {
-            rb.bodyType = RigidbodyType2D.Dynamic;
+            rb.bodyType = IsServer ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
             rb.simulated = true;
             rb.linearVelocity = Vector2.zero;
             rb.angularVelocity = 0f;
         }
+    }
+
+    public void EnableJump()
+    {
+        canJump = true;
+        Debug.Log($"[NetworkCarController SUCCESS] Jump Unlocked by JumpTrigger contact for Player Car (IsOwner: {IsOwner})!");
     }
 
     private void Update()
@@ -232,33 +247,18 @@ public class NetworkCarController : NetworkBehaviour
         if (hasWonPlayer) return;
         if (healthComp != null && healthComp.isDead.Value) return;
 
+        // Boost Input Check: ONLY X Key (Keyboard) or Gamepad buttonSouth (A/Cross)
         bool boostPressed = false;
-
-        // Pure Unity 6 Keyboard check
-        if (Keyboard.current != null)
+        if (Keyboard.current != null && Keyboard.current.xKey.wasPressedThisFrame)
         {
-            if (Keyboard.current.spaceKey.wasPressedThisFrame ||
-                Keyboard.current.leftShiftKey.wasPressedThisFrame ||
-                Keyboard.current.rightShiftKey.wasPressedThisFrame ||
-                Keyboard.current.wKey.wasPressedThisFrame ||
-                Keyboard.current.upArrowKey.wasPressedThisFrame ||
-                Keyboard.current.enterKey.wasPressedThisFrame)
-            {
-                boostPressed = true;
-            }
+            boostPressed = true;
         }
 
-        // Pure Unity 6 Gamepad check
-        if (Gamepad.current != null)
+        if (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame)
         {
-            if (Gamepad.current.buttonSouth.wasPressedThisFrame ||
-                Gamepad.current.rightTrigger.wasPressedThisFrame)
-            {
-                boostPressed = true;
-            }
+            boostPressed = true;
         }
 
-        // New Input System Action check
         if (BoostInput != null)
         {
             try
@@ -271,17 +271,88 @@ public class NetworkCarController : NetworkBehaviour
 
         if (boostPressed)
         {
-            Debug.Log($"[NetworkCarController SUCCESS] Boost Activated for Local Car (IsOwner: {IsOwner}, IsHost: {isHostCarNet.Value})");
-            isBoosted = true;
+            Debug.Log($"[NetworkCarController SUCCESS] Boost Triggered by Local Player (IsOwner: {IsOwner})");
             RequestBoostServerRpc();
         }
+
+        // Jump Input Check: ONLY Spacebar (Keyboard) or Gamepad buttonNorth (Y/Triangle)
+        bool jumpPressed = false;
+        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
+        {
+            jumpPressed = true;
+        }
+
+        if (Gamepad.current != null && Gamepad.current.buttonNorth.wasPressedThisFrame)
+        {
+            jumpPressed = true;
+        }
+
+        if (JumpInput != null)
+        {
+            try
+            {
+                if (!JumpInput.enabled) JumpInput.Enable();
+                if (JumpInput.WasPressedThisFrame()) jumpPressed = true;
+            }
+            catch { }
+        }
+
+        if (jumpPressed)
+        {
+            TryExecuteJump();
+        }
+    }
+
+    private void TryExecuteJump()
+    {
+        if (!IsOwner && !IsLocalPlayer) return;
+        if (!isBoosted || (healthComp != null && healthComp.isDead.Value) || hasWonPlayer) return;
+
+        if (!canJump)
+        {
+            Debug.Log("[NetworkCarController] Cannot Jump — JumpTrigger contact required to unlock jump!");
+            return;
+        }
+
+        if (Time.time < nextJumpTime)
+        {
+            Debug.Log($"[NetworkCarController] Jump on Cooldown! Remaining: {nextJumpTime - Time.time:F1}s");
+            return;
+        }
+
+        nextJumpTime = Time.time + jumpCooldown;
+        canJump = false; // Consume jump pickup
+
+        Debug.Log($"[NetworkCarController SUCCESS] Executing Jump with {jumpCooldown}s Cooldown (IsOwner: {IsOwner})!");
+        TriggerJumpRpc();
     }
 
     private void FixedUpdate()
     {
-        if (!IsOwner && !IsLocalPlayer) return;
-        if (healthComp != null && healthComp.isDead.Value) return;
+        // 1. Non-host owner reads local input and sends unreliable turn RPC to server (~50/s)
+        if ((IsOwner || IsLocalPlayer) && !IsServer)
+        {
+            float turn = (hasWonPlayer || (healthComp != null && healthComp.isDead.Value)) ? 0f : ReadTurnInput();
+            SubmitTurnInputServerRpc(turn);
+        }
+
+        // 2. Server simulates physics movement authoritatively
+        if (IsServer)
+        {
+            ApplyServerMovement();
+        }
+    }
+
+    [Rpc(SendTo.Server, Delivery = RpcDelivery.Unreliable, InvokePermission = RpcInvokePermission.Everyone)]
+    private void SubmitTurnInputServerRpc(float turn)
+    {
+        pendingTurnInput = turn;
+    }
+
+    private void ApplyServerMovement()
+    {
         if (hasWonPlayer) return;
+        if (healthComp != null && healthComp.isDead.Value) return;
 
         if (boostCooldownTimer > 0f)
         {
@@ -303,7 +374,7 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        float turn = ReadTurnInput();
+        float turn = IsOwner ? ReadTurnInput() : pendingTurnInput;
         float absTurn = Mathf.Abs(turn);
 
         float turnBoost = Mathf.Lerp(1f, driftTurnMultiplier, absTurn);
@@ -358,7 +429,6 @@ public class NetworkCarController : NetworkBehaviour
     private void OnBoostPerformed(InputAction.CallbackContext context)
     {
         if (!IsOwner && !IsLocalPlayer) return;
-        isBoosted = true;
         RequestBoostServerRpc();
     }
 
@@ -375,13 +445,7 @@ public class NetworkCarController : NetworkBehaviour
 
     private void OnJumpPerformed(InputAction.CallbackContext context)
     {
-        if ((!IsOwner && !IsLocalPlayer) || !isBoosted || (healthComp != null && healthComp.isDead.Value) || hasWonPlayer) return;
-        if (!canJump || Time.time < nextJumpTime) return;
-
-        canJump = false;
-        nextJumpTime = Time.time + jumpCooldown;
-
-        TriggerJumpRpc();
+        TryExecuteJump();
     }
 
     [Rpc(SendTo.Everyone)]
@@ -392,11 +456,6 @@ public class NetworkCarController : NetworkBehaviour
             StopCoroutine(jumpCoroutine);
         }
         jumpCoroutine = StartCoroutine(JumpEffect());
-    }
-
-    public void EnableJump()
-    {
-        canJump = true;
     }
 
     private IEnumerator JumpEffect()
@@ -424,18 +483,21 @@ public class NetworkCarController : NetworkBehaviour
             }
         }
 
+        // Change layer to jumpCollisionLayer for exactly jumpDuration seconds
         if (boxCollider != null)
         {
             boxCollider.gameObject.layer = jumpCollisionLayer;
         }
 
+        float halfDuration = jumpDuration * 0.5f;
         float elapsedTime = 0f;
         Vector3 targetScale = originalCarScale * carJumpScale;
 
-        while (elapsedTime < jumpDuration)
+        // Scale up phase (first 50% of jumpDuration)
+        while (elapsedTime < halfDuration)
         {
             elapsedTime += Time.deltaTime;
-            float t = elapsedTime / jumpDuration;
+            float t = elapsedTime / halfDuration;
             transform.localScale = Vector3.Lerp(
                 originalCarScale,
                 targetScale,
@@ -448,10 +510,11 @@ public class NetworkCarController : NetworkBehaviour
         transform.localScale = targetScale;
         elapsedTime = 0f;
 
-        while (elapsedTime < jumpDuration)
+        // Scale down phase (second 50% of jumpDuration)
+        while (elapsedTime < halfDuration)
         {
             elapsedTime += Time.deltaTime;
-            float t = elapsedTime / jumpDuration;
+            float t = elapsedTime / halfDuration;
             transform.localScale = Vector3.Lerp(
                 targetScale,
                 originalCarScale,
@@ -463,6 +526,7 @@ public class NetworkCarController : NetworkBehaviour
 
         transform.localScale = originalCarScale;
 
+        // Revert layer back to playerLayer immediately when jumpDuration completes
         if (boxCollider != null)
         {
             boxCollider.gameObject.layer = playerLayer;
@@ -543,10 +607,8 @@ public class NetworkCarController : NetworkBehaviour
         if (BoostAction == null && fallbackBoostAction == null)
         {
             fallbackBoostAction = new InputAction("FallbackBoost", InputActionType.Button);
-            fallbackBoostAction.AddBinding("<Keyboard>/space");
-            fallbackBoostAction.AddBinding("<Keyboard>/shift");
+            fallbackBoostAction.AddBinding("<Keyboard>/x");
             fallbackBoostAction.AddBinding("<Gamepad>/buttonSouth");
-            fallbackBoostAction.AddBinding("<Gamepad>/rightTrigger");
 
             fallbackBoostAction.Enable();
         }
@@ -554,8 +616,8 @@ public class NetworkCarController : NetworkBehaviour
         if (JumpAction == null && fallbackJumpAction == null)
         {
             fallbackJumpAction = new InputAction("FallbackJump", InputActionType.Button);
-            fallbackJumpAction.AddBinding("<Keyboard>/j");
-            fallbackJumpAction.AddBinding("<Gamepad>/buttonEast");
+            fallbackJumpAction.AddBinding("<Keyboard>/space");
+            fallbackJumpAction.AddBinding("<Gamepad>/buttonNorth");
 
             fallbackJumpAction.Enable();
         }
@@ -594,7 +656,7 @@ public class NetworkCarController : NetworkBehaviour
 
     private void UpdateTyreMarks(float turn)
     {
-        if (tyreMarkPrefab == null || Mathf.Abs(turn) < 0.5f) return;
+        if (Mathf.Abs(turn) < 0.35f) return;
 
         float sidewaysVelocity = GetSidewaysVelocity();
         float currentDriftThreshold = driftThreshold;
@@ -614,23 +676,48 @@ public class NetworkCarController : NetworkBehaviour
 
     private void UpdateTyreMark(Transform tyre, ref Vector2 lastPosition, ref float distance)
     {
-        if (tyre == null) return;
+        if (!IsServer) return;
 
-        Vector2 currentPosition = tyre.position;
+        Vector2 currentPosition = (tyre != null) ? (Vector2)tyre.position : (Vector2)transform.position;
         distance += Vector2.Distance(currentPosition, lastPosition);
 
         if (distance >= tyreMarkSpacing)
         {
             float rotationDegrees = transform.eulerAngles.z + tyreMarkRotationOffset;
+            SpawnTyreMarkRpc(currentPosition, rotationDegrees);
+            lastPosition = currentPosition;
+            distance = 0f;
+        }
+    }
+
+    [Rpc(SendTo.Everyone)]
+    private void SpawnTyreMarkRpc(Vector2 position, float rotationDegrees)
+    {
+        if (tyreMarkPrefab != null)
+        {
             GameObject tyreMark = Instantiate(
                 tyreMarkPrefab,
-                currentPosition,
+                position,
                 Quaternion.Euler(0f, 0f, rotationDegrees)
             );
 
             Destroy(tyreMark, tyreMarkLifetime);
-            lastPosition = currentPosition;
-            distance = 0f;
+        }
+        else
+        {
+            // Fallback visual tyre mark creation if prefab reference is missing
+            GameObject fallbackMark = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            fallbackMark.transform.position = new Vector3(position.x, position.y, 0.1f);
+            fallbackMark.transform.rotation = Quaternion.Euler(0f, 0f, rotationDegrees);
+            fallbackMark.transform.localScale = new Vector3(0.2f, 0.4f, 1f);
+
+            Collider col = fallbackMark.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
+            SpriteRenderer sr = fallbackMark.GetComponent<SpriteRenderer>();
+            if (sr != null) sr.color = new Color(0.1f, 0.1f, 0.1f, 0.6f);
+
+            Destroy(fallbackMark, tyreMarkLifetime);
         }
     }
 

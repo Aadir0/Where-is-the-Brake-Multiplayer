@@ -1,6 +1,3 @@
-using System;
-using Unity.Mathematics;
-using Unity.VisualScripting;
 using UnityEngine;
 
 public class JumpTrigger : MonoBehaviour
@@ -9,11 +6,16 @@ public class JumpTrigger : MonoBehaviour
     {
         if (other.CompareTag("Player"))
         {
-            CarControllerSingle carController = other.GetComponent<CarControllerSingle>();
-
-            if (carController != null)
+            NetworkCarController netCarController = other.GetComponent<NetworkCarController>();
+            if (netCarController != null)
             {
-                carController.EnableJump();
+                netCarController.EnableJump();
+            }
+
+            CarControllerSingle singleCarController = other.GetComponent<CarControllerSingle>();
+            if (singleCarController != null)
+            {
+                singleCarController.EnableJump();
             }
         }
     }

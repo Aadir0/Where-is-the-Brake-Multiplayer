@@ -2017,9 +2017,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 10ecd42c188048b48931e5db774d2861, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSpawner
+  playerCarPrefab: {fileID: 7010108498064275808, guid: 38a932c2272f2ab4ea58a51ef448fbfa, type: 3}
   hostCarPrefab: {fileID: 7010108498064275808, guid: 38a932c2272f2ab4ea58a51ef448fbfa, type: 3}
   clientCarPrefab: {fileID: 7010108498064275808, guid: 72b69c44079b2e34fb68d25ac3f5d59f, type: 3}
-  playerCarPrefab: {fileID: 7010108498064275808, guid: 38a932c2272f2ab4ea58a51ef448fbfa, type: 3}
   spawnDelayInGameplayScene: 0.5
   fallbackSpawnPosition: {x: 999, y: 999, z: 0}
 --- !u!114 &925046735

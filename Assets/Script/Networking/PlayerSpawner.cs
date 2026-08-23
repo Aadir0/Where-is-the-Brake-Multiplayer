@@ -21,6 +21,7 @@ public class PlayerSpawner : MonoBehaviour
     [SerializeField] private Vector3 fallbackSpawnPosition = Vector3.zero;
 
     private readonly Dictionary<ulong, NetworkObject> spawnedPlayers = new Dictionary<ulong, NetworkObject>();
+    private readonly List<ulong> pendingSpawnClients = new List<ulong>();
     private bool isSpawningInProgress = false;
 
     private void Awake()
@@ -106,6 +107,13 @@ public class PlayerSpawner : MonoBehaviour
         {
             SpawnOrRepositionPlayerForClient(clientId, (int)clientId);
         }
+        else
+        {
+            if (!pendingSpawnClients.Contains(clientId))
+            {
+                pendingSpawnClients.Add(clientId);
+            }
+        }
 
         NotifyPlayerCountToAllClients();
     }
@@ -114,6 +122,7 @@ public class PlayerSpawner : MonoBehaviour
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
+        pendingSpawnClients.Remove(clientId);
         DespawnPlayerForClient(clientId);
         NotifyPlayerCountToAllClients();
     }
@@ -205,6 +214,14 @@ public class PlayerSpawner : MonoBehaviour
         }
 
         SpawnAllPlayersInScene();
+
+        // Process any clients that connected during spawn delay
+        foreach (ulong clientId in pendingSpawnClients)
+        {
+            SpawnOrRepositionPlayerForClient(clientId, (int)clientId);
+        }
+        pendingSpawnClients.Clear();
+
         isSpawningInProgress = false;
 
         // Trigger race countdown timer ONLY after the load delay finishes
