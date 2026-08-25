@@ -23,9 +23,11 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private Animator panelAnim;
     [SerializeField] private string selectedBoolPrefix = "isSelected";
     [SerializeField] private string playBoolName = "Play";
+    [SerializeField] private string stopBoolName = "Stop";
     [SerializeField] private string playTriggerName = "Play";
     [SerializeField] private string playStateName = "Play";
     [SerializeField] private AnimationClip playAnimation;
+    [SerializeField] private AnimationClip stopAnimation;
 
     [Header("Input")]
     [SerializeField] private float moveRepeatDelay = 0.25f;
@@ -36,7 +38,7 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private GameObject OptionMenu;
     [SerializeField] private Button optionBackButton;
 
-    private int selectedIndex;
+    private int selectedIndex = 0;
     private float nextMoveTime;
     private bool isBusy;
     private bool isOptionMenuOpen;
@@ -58,12 +60,13 @@ public class JustAButton : MonoBehaviour
 
         EnableMainButtons();
 
-        selectedIndex = Mathf.Clamp(
-            firstSelectedIndex,
-            0,
-            Mathf.Max(0, buttons.Count - 1)
-        );
+        selectedIndex = Mathf.Clamp(firstSelectedIndex, 0, Mathf.Max(0, buttons.Count - 1));
+        SelectButton(selectedIndex);
+    }
 
+    private void Start()
+    {
+        selectedIndex = Mathf.Clamp(firstSelectedIndex, 0, Mathf.Max(0, buttons.Count - 1));
         SelectButton(selectedIndex);
     }
 
@@ -391,7 +394,7 @@ public class JustAButton : MonoBehaviour
             Time.unscaledTime + moveRepeatDelay;
     }
 
-    private void SelectButton(int index)
+    public void SelectButton(int index)
     {
         if (buttons.Count == 0 ||
             index < 0 ||
@@ -419,25 +422,23 @@ public class JustAButton : MonoBehaviour
 
     private void UpdateAnimatorSelection()
     {
-        if (anim == null)
-        {
-            return;
-        }
-
         for (int i = 0; i < buttons.Count; i++)
         {
-            string parameterName =
-                selectedBoolPrefix + (i + 1);
+            string parameterName = selectedBoolPrefix + (i + 1);
 
-            if (HasAnimatorParameter(
-                anim,
-                parameterName,
-                AnimatorControllerParameterType.Bool))
+            if (anim != null && HasAnimatorParameter(anim, parameterName, AnimatorControllerParameterType.Bool))
             {
-                anim.SetBool(
-                    parameterName,
-                    i == selectedIndex
-                );
+                anim.SetBool(parameterName, i == selectedIndex);
+            }
+
+            if (carAnimator != null && HasAnimatorParameter(carAnimator, parameterName, AnimatorControllerParameterType.Bool))
+            {
+                carAnimator.SetBool(parameterName, i == selectedIndex);
+            }
+
+            if (panelAnim != null && HasAnimatorParameter(panelAnim, parameterName, AnimatorControllerParameterType.Bool))
+            {
+                panelAnim.SetBool(parameterName, i == selectedIndex);
             }
         }
     }
@@ -501,9 +502,44 @@ public class JustAButton : MonoBehaviour
     {
         isBusy = true;
 
+        SetAnimatorBool(carAnimator, stopBoolName, false);
+        SetAnimatorBool(panelAnim, stopBoolName, false);
+        SetAnimatorBool(anim, stopBoolName, false);
+
         SetAnimatorBool(carAnimator, playBoolName, true);
         SetAnimatorBool(panelAnim, playBoolName, true);
         SetAnimatorBool(anim, playBoolName, true);
+    }
+
+    public void PlayStopAnimation()
+    {
+        isBusy = true;
+
+        SetAnimatorBool(carAnimator, playBoolName, false);
+        SetAnimatorBool(panelAnim, playBoolName, false);
+        SetAnimatorBool(anim, playBoolName, false);
+
+        SetAnimatorBool(carAnimator, stopBoolName, true);
+        SetAnimatorBool(panelAnim, stopBoolName, true);
+        SetAnimatorBool(anim, stopBoolName, true);
+    }
+
+    public IEnumerator WaitForStopAnimation()
+    {
+        if (stopAnimation != null)
+        {
+            yield return new WaitForSecondsRealtime(stopAnimation.length);
+        }
+        else
+        {
+            yield return new WaitForSecondsRealtime(0.5f);
+        }
+
+        SetAnimatorBool(carAnimator, stopBoolName, false);
+        SetAnimatorBool(panelAnim, stopBoolName, false);
+        SetAnimatorBool(anim, stopBoolName, false);
+
+        isBusy = false;
     }
 
     public void ResetMenuAnimation()
@@ -514,9 +550,11 @@ public class JustAButton : MonoBehaviour
         SetAnimatorBool(panelAnim, playBoolName, false);
         SetAnimatorBool(anim, playBoolName, false);
 
-        SafeResetAnimator(carAnimator);
-        SafeResetAnimator(panelAnim);
-        SafeResetAnimator(anim);
+        SetAnimatorBool(carAnimator, stopBoolName, false);
+        SetAnimatorBool(panelAnim, stopBoolName, false);
+        SetAnimatorBool(anim, stopBoolName, false);
+
+        SelectButton(Mathf.Clamp(firstSelectedIndex, 0, Mathf.Max(0, buttons.Count - 1)));
     }
 
     private void SetAnimatorBool(Animator animator, string boolName, bool value)
@@ -545,33 +583,6 @@ public class JustAButton : MonoBehaviour
                 animator.ResetTrigger(playTriggerName);
             }
         }
-    }
-
-    private void SafeResetAnimator(Animator animator)
-    {
-        if (animator == null) return;
-
-        try
-        {
-            if (!string.IsNullOrEmpty(playTriggerName) && HasAnimatorParameter(animator, playTriggerName, AnimatorControllerParameterType.Trigger))
-            {
-                animator.ResetTrigger(playTriggerName);
-            }
-
-            if (HasAnimatorParameter(animator, "Reset", AnimatorControllerParameterType.Trigger))
-            {
-                animator.SetTrigger("Reset");
-            }
-
-            animator.Rebind();
-
-            if (animator.gameObject.activeInHierarchy && animator.enabled)
-            {
-                animator.Play(0, 0, 0f);
-                animator.Update(0f);
-            }
-        }
-        catch { }
     }
 
     public IEnumerator WaitForPlayAnimation()

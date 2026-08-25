@@ -75,6 +75,15 @@ public class NetworkCarController : NetworkBehaviour
     private Vector2 lastRearLeftPosition;
     private Vector2 lastRearRightPosition;
 
+    [Header("Car Sound Effects")]
+    [SerializeField] private AudioClip engineStartSound;
+    [SerializeField] private AudioClip engineRunningSound;
+    [SerializeField] private AudioClip driftSound;
+    [SerializeField] private AudioClip jumpSound;
+    [SerializeField] private AudioSource engineAudioSource;
+    [SerializeField] private AudioSource driftAudioSource;
+    [SerializeField] private AudioSource effectsAudioSource;
+
     [Header("Host/Client Visual Distinctions")]
     [SerializeField] private Sprite hostSprite;
     [SerializeField] private Sprite clientSprite;
@@ -116,8 +125,36 @@ public class NetworkCarController : NetworkBehaviour
         canJump = false;
         isJumping = false;
 
+        InitializeAudioSources();
         CreateFallbackActions();
         InitializeTyrePositions();
+    }
+
+    private void InitializeAudioSources()
+    {
+        if (engineAudioSource == null)
+        {
+            engineAudioSource = gameObject.AddComponent<AudioSource>();
+            engineAudioSource.loop = true;
+            engineAudioSource.playOnAwake = false;
+            engineAudioSource.spatialBlend = 0.5f;
+        }
+
+        if (driftAudioSource == null)
+        {
+            driftAudioSource = gameObject.AddComponent<AudioSource>();
+            driftAudioSource.loop = true;
+            driftAudioSource.playOnAwake = false;
+            driftAudioSource.spatialBlend = 0.5f;
+        }
+
+        if (effectsAudioSource == null)
+        {
+            effectsAudioSource = gameObject.AddComponent<AudioSource>();
+            effectsAudioSource.loop = false;
+            effectsAudioSource.playOnAwake = false;
+            effectsAudioSource.spatialBlend = 0.5f;
+        }
     }
 
     public override void OnNetworkSpawn()
@@ -185,6 +222,8 @@ public class NetworkCarController : NetworkBehaviour
             DisableInput(BoostInput);
             DisableInput(JumpInput);
         }
+
+        StopCarAudio();
     }
 
     private void OnHostCarStateChanged(bool previousState, bool newState)
@@ -218,6 +257,7 @@ public class NetworkCarController : NetworkBehaviour
             rb.linearVelocity = Vector2.zero;
             rb.angularVelocity = 0f;
         }
+        StopCarAudio();
     }
 
     [Rpc(SendTo.Everyone)]
@@ -241,6 +281,7 @@ public class NetworkCarController : NetworkBehaviour
             rb.linearVelocity = Vector2.zero;
             rb.angularVelocity = 0f;
         }
+        StopCarAudio();
     }
 
     [Rpc(SendTo.Everyone)]
@@ -266,6 +307,8 @@ public class NetworkCarController : NetworkBehaviour
             rb.linearVelocity = Vector2.zero;
             rb.angularVelocity = 0f;
         }
+
+        StopCarAudio();
     }
 
     public void EnableJump()
@@ -278,7 +321,11 @@ public class NetworkCarController : NetworkBehaviour
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
-        if (healthComp != null && healthComp.isDead.Value) return;
+        if (healthComp != null && healthComp.isDead.Value)
+        {
+            StopCarAudio();
+            return;
+        }
 
         // Stop all controls when TimeOver UI is displayed
         if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value)
@@ -289,6 +336,7 @@ public class NetworkCarController : NetworkBehaviour
                 rb.linearVelocity = Vector2.zero;
                 rb.angularVelocity = 0f;
             }
+            StopCarAudio();
             return;
         }
 
@@ -358,6 +406,13 @@ public class NetworkCarController : NetworkBehaviour
             isBoosted = true;
             currentSpeed = speed;
             boostCooldownTimer = speedBoostInterval;
+
+            // Play Engine Start sound effect
+            if (effectsAudioSource != null && engineStartSound != null)
+            {
+                effectsAudioSource.PlayOneShot(engineStartSound);
+            }
+
             NotifyBoostStartedRpc();
         }
         else if (boostCooldownTimer <= 0f)
@@ -405,7 +460,11 @@ public class NetworkCarController : NetworkBehaviour
         // Owner drives physics simulation locally with zero input latency
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
-        if (healthComp != null && healthComp.isDead.Value) return;
+        if (healthComp != null && healthComp.isDead.Value)
+        {
+            StopCarAudio();
+            return;
+        }
 
         if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value)
         {
@@ -415,6 +474,7 @@ public class NetworkCarController : NetworkBehaviour
                 rb.linearVelocity = Vector2.zero;
                 rb.angularVelocity = 0f;
             }
+            StopCarAudio();
             return;
         }
 
@@ -435,6 +495,7 @@ public class NetworkCarController : NetworkBehaviour
             {
                 rb.linearVelocity = Vector2.zero;
             }
+            StopCarAudio();
             return;
         }
 
@@ -467,6 +528,55 @@ public class NetworkCarController : NetworkBehaviour
         }
 
         UpdateTyreMarks(turn);
+        UpdateCarAudio(turn);
+    }
+
+    private void UpdateCarAudio(float turn)
+    {
+        float sidewaysVel = GetSidewaysVelocity();
+        bool isDrifting = Mathf.Abs(turn) >= 0.35f && Mathf.Abs(sidewaysVel) >= driftThreshold && !isJumping;
+
+        // 1. Handle Drift Audio (screeching tires when drift threshold reached)
+        if (isDrifting && driftSound != null)
+        {
+            if (!driftAudioSource.isPlaying || driftAudioSource.clip != driftSound)
+            {
+                driftAudioSource.clip = driftSound;
+                driftAudioSource.Play();
+            }
+        }
+        else
+        {
+            if (driftAudioSource.isPlaying)
+            {
+                driftAudioSource.Stop();
+            }
+        }
+
+        // 2. Handle Engine Running Audio
+        if (engineRunningSound != null && !isJumping)
+        {
+            if (!engineAudioSource.isPlaying || engineAudioSource.clip != engineRunningSound)
+            {
+                engineAudioSource.clip = engineRunningSound;
+                engineAudioSource.Play();
+            }
+
+            engineAudioSource.volume = isDrifting ? 0.45f : 1.0f;
+        }
+        else
+        {
+            if (engineAudioSource.isPlaying)
+            {
+                engineAudioSource.Stop();
+            }
+        }
+    }
+
+    private void StopCarAudio()
+    {
+        if (engineAudioSource != null && engineAudioSource.isPlaying) engineAudioSource.Stop();
+        if (driftAudioSource != null && driftAudioSource.isPlaying) driftAudioSource.Stop();
     }
 
     private void OnBoostPerformed(InputAction.CallbackContext context)
@@ -503,6 +613,12 @@ public class NetworkCarController : NetworkBehaviour
     private IEnumerator JumpEffect()
     {
         isJumping = true;
+        StopCarAudio();
+
+        if (effectsAudioSource != null && jumpSound != null)
+        {
+            effectsAudioSource.PlayOneShot(jumpSound);
+        }
 
         if (jumpEffectPrefab != null)
         {
@@ -768,5 +884,6 @@ public class NetworkCarController : NetworkBehaviour
         fallbackMoveAction?.Dispose();
         fallbackBoostAction?.Dispose();
         fallbackJumpAction?.Dispose();
+        StopCarAudio();
     }
 }

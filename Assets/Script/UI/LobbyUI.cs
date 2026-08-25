@@ -126,6 +126,9 @@ public class LobbyUI : MonoBehaviour
             menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
         }
 
+        // Keep mainMenuPanel ACTIVE while playing press animation
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
+
         if (menuButtonAnimator != null)
         {
             menuButtonAnimator.PlayPressAnimation();
@@ -178,6 +181,9 @@ public class LobbyUI : MonoBehaviour
         {
             menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
         }
+
+        // Keep mainMenuPanel ACTIVE while playing press animation
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
 
         if (menuButtonAnimator != null)
         {
@@ -289,6 +295,11 @@ public class LobbyUI : MonoBehaviour
 
     private void OnLeaveRoomClicked()
     {
+        StartCoroutine(LeaveRoomRoutine());
+    }
+
+    private IEnumerator LeaveRoomRoutine()
+    {
         if (RelayManager.Instance != null)
         {
             RelayManager.Instance.ShutdownSession();
@@ -299,8 +310,15 @@ public class LobbyUI : MonoBehaviour
             menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
         }
 
+        // STEP 1: Enable mainMenuPanel FIRST so animators are active in hierarchy!
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
+        if (lobbyPanel != null) lobbyPanel.SetActive(false);
+
+        // STEP 2 & 3: Play Stop animation on ACTIVE animators and wait!
         if (menuButtonAnimator != null)
         {
+            menuButtonAnimator.PlayStopAnimation();
+            yield return menuButtonAnimator.WaitForStopAnimation();
             menuButtonAnimator.ResetMenuAnimation();
         }
 
@@ -326,16 +344,7 @@ public class LobbyUI : MonoBehaviour
 
         if (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsServer && !NetworkManager.Singleton.IsConnectedClient)
         {
-            if (menuButtonAnimator == null)
-            {
-                menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
-            }
-
-            if (menuButtonAnimator != null)
-            {
-                menuButtonAnimator.ResetMenuAnimation();
-            }
-            ShowMainMenuPanel();
+            StartCoroutine(LeaveRoomRoutine());
             UpdateStatusText("Disconnected from Host.");
         }
     }
@@ -349,6 +358,9 @@ public class LobbyUI : MonoBehaviour
 
     private void ShowMainMenuPanel()
     {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
+        if (lobbyPanel != null) lobbyPanel.SetActive(false);
+
         if (menuButtonAnimator == null)
         {
             menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
@@ -358,9 +370,6 @@ public class LobbyUI : MonoBehaviour
         {
             menuButtonAnimator.ResetMenuAnimation();
         }
-
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
-        if (lobbyPanel != null) lobbyPanel.SetActive(false);
 
         if (createRoomButton != null)
         {

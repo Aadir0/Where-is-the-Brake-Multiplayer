@@ -973,7 +973,7 @@ MonoBehaviour:
     m_SelectedTrigger: Selected
     m_DisabledTrigger: Disabled
   m_Interactable: 1
-  m_TargetGraphic: {fileID: 0}
+  m_TargetGraphic: {fileID: 405380216}
   m_OnClick:
     m_PersistentCalls:
       m_Calls:
@@ -2020,7 +2020,7 @@ MonoBehaviour:
   playerCarPrefab: {fileID: 7010108498064275808, guid: 38a932c2272f2ab4ea58a51ef448fbfa, type: 3}
   hostCarPrefab: {fileID: 7010108498064275808, guid: 38a932c2272f2ab4ea58a51ef448fbfa, type: 3}
   clientCarPrefab: {fileID: 7010108498064275808, guid: 72b69c44079b2e34fb68d25ac3f5d59f, type: 3}
-  spawnDelayInGameplayScene: 0.5
+  spawnDelayInGameplayScene: 0.2
   fallbackSpawnPosition: {x: 999, y: 999, z: 0}
 --- !u!114 &925046735
 MonoBehaviour:
@@ -2922,9 +2922,12 @@ MonoBehaviour:
   carAnimator: {fileID: 176915450}
   panelAnim: {fileID: 250694816}
   selectedBoolPrefix: isSelected
+  playBoolName: Play
+  stopBoolName: Stop
   playTriggerName: Play
   playStateName: Play
   playAnimation: {fileID: 7400000, guid: 262815aedf5068146b5d4974396a7ea4, type: 2}
+  stopAnimation: {fileID: 0}
   moveRepeatDelay: 0.25
   gamepadDeadzone: 0.5
   uiInputModule: {fileID: 2062242647}
@@ -3013,7 +3016,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 1820, y: 980}
+  m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1912924442
 MonoBehaviour:

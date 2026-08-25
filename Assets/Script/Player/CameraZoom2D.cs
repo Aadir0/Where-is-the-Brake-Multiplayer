@@ -31,6 +31,12 @@ public class CameraZoom2D : MonoBehaviour
         {
             cam.orthographicSize = Mathf.Lerp(cam.orthographicSize, normalSize, zoomSpeed * Time.deltaTime);
         }
+
+        CameraFollow follow = GetComponent<CameraFollow>();
+        if (follow != null && follow.enableConfiner)
+        {
+            transform.position = follow.ClampPosition(transform.position);
+        }
     }
 
     public void StartZoom(Transform player)
@@ -46,6 +52,12 @@ public class CameraZoom2D : MonoBehaviour
         if (cam != null)
         {
             cam.orthographicSize = normalSize;
+        }
+
+        CameraFollow follow = GetComponent<CameraFollow>();
+        if (follow != null && follow.enableConfiner)
+        {
+            transform.position = follow.ClampPosition(transform.position);
         }
     }
 }
