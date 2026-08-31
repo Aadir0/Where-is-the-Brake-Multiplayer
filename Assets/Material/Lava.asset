@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 13b75c95f34a00d4e8c04f76b73312e6, type: 3}
+  m_Name: Lava
+  m_EditorClassIdentifier: Unity.2D.Tilemap.Extras::UnityEngine.Tilemaps.AnimatedTile
+  m_AnimatedSprites:
+  - {fileID: 2460069914227406996, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: 1050040523, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: 451215108, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: -1931483182, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: 1751674213, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: 1791445688, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: 1328878266, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: -1995451662, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  - {fileID: 937514860, guid: 84d4363cdf4359e4195a7b5f1105904d, type: 3}
+  m_MinSpeed: 0.2
+  m_MaxSpeed: 0.3
+  m_AnimationStartTime: 0
+  m_AnimationStartFrame: 0
+  m_TileColliderType: 1
+  m_TileAnimationFlags: 0

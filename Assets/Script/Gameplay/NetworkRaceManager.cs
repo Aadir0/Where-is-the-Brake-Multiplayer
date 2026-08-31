@@ -31,9 +31,21 @@ public class NetworkRaceManager : NetworkBehaviour
     public event Action<ulong> OnPlayerFinished;
     public event Action<int> OnPlayerCountChanged;
     public event Action<int, int> OnReadyPlayerCountChanged;
+    public event Action OnBothPlayersFinished;
+    public event Action<ulong> OnPlayerTimeIsLess;
 
     private readonly List<ulong> finishedPlayers = new List<ulong>();
     private readonly HashSet<ulong> readyPlayersSet = new HashSet<ulong>();
+
+    [Header("Finish Window Timer")]
+    [SerializeField] private float finishWindowDuration = 40.0f;
+    private Coroutine finishWindowCoroutine;
+
+    public NetworkVariable<float> finishWindowTimer = new NetworkVariable<float>(
+        0f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
 
     private void Awake()
     {
@@ -48,73 +60,41 @@ public class NetworkRaceManager : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
-        currentRaceState.OnValueChanged += HandleStateChanged;
-        countdownTimer.OnValueChanged += HandleCountdownChanged;
-        connectedPlayerCount.OnValueChanged += HandlePlayerCountChanged;
+        currentRaceState.OnValueChanged += HandleRaceStateChanged;
+        countdownTimer.OnValueChanged += HandleCountdownTimerChanged;
+        connectedPlayerCount.OnValueChanged += HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged += HandleReadyPlayerCountChanged;
 
         if (IsServer)
         {
-            currentRaceState.Value = RaceState.LobbyWaiting;
-            readyPlayersSet.Clear();
+            connectedPlayerCount.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
             readyPlayerCount.Value = 0;
-            UpdatePlayerCountServer();
-
-            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnectedServer;
-            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnectedServer;
+            readyPlayersSet.Clear();
+            finishedPlayers.Clear();
         }
     }
 
     public override void OnNetworkDespawn()
     {
-        currentRaceState.OnValueChanged -= HandleStateChanged;
-        countdownTimer.OnValueChanged -= HandleCountdownChanged;
-        connectedPlayerCount.OnValueChanged -= HandlePlayerCountChanged;
+        currentRaceState.OnValueChanged -= HandleRaceStateChanged;
+        countdownTimer.OnValueChanged -= HandleCountdownTimerChanged;
+        connectedPlayerCount.OnValueChanged -= HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged -= HandleReadyPlayerCountChanged;
-
-        if (IsServer && NetworkManager.Singleton != null)
-        {
-            NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnectedServer;
-            NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnectedServer;
-        }
     }
 
-    private void OnClientConnectedServer(ulong clientId)
+    private void HandleRaceStateChanged(RaceState previousVal, RaceState newVal)
     {
-        UpdatePlayerCountServer();
+        OnRaceStateChanged?.Invoke(newVal);
     }
 
-    private void OnClientDisconnectedServer(ulong clientId)
+    private void HandleCountdownTimerChanged(float previousVal, float newVal)
     {
-        readyPlayersSet.Remove(clientId);
-        readyPlayerCount.Value = readyPlayersSet.Count;
-        UpdatePlayerCountServer();
+        OnCountdownTick?.Invoke(Mathf.CeilToInt(newVal));
     }
 
-    private void UpdatePlayerCountServer()
-    {
-        if (!IsServer || NetworkManager.Singleton == null) return;
-        connectedPlayerCount.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
-    }
-
-    private void HandleStateChanged(RaceState previousState, RaceState newState)
-    {
-        OnRaceStateChanged?.Invoke(newState);
-    }
-
-    private void HandleCountdownChanged(float previousVal, float newVal)
-    {
-        int second = Mathf.CeilToInt(newVal);
-        OnCountdownTick?.Invoke(second);
-    }
-
-    private void HandlePlayerCountChanged(int previousVal, int newVal)
+    private void HandleConnectedPlayerCountChanged(int previousVal, int newVal)
     {
         OnPlayerCountChanged?.Invoke(newVal);
-        if (LobbyUI.Instance != null)
-        {
-            LobbyUI.Instance.UpdatePlayerCountDisplay(newVal);
-        }
     }
 
     private void HandleReadyPlayerCountChanged(int previousVal, int newVal)
@@ -146,7 +126,6 @@ public class NetworkRaceManager : NetworkBehaviour
         countdownTimer.Value = 0f;
         currentRaceState.Value = RaceState.Racing;
 
-        // Start 5-minute level timer ONLY when countdown reaches 0 (GO!)
         if (LevelTimer.Instance != null && IsServer)
         {
             LevelTimer.Instance.StartTimerServer();
@@ -164,15 +143,71 @@ public class NetworkRaceManager : NetworkBehaviour
         {
             winnerClientId.Value = clientId;
             currentRaceState.Value = RaceState.Finished;
+
+            if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
+            finishWindowCoroutine = StartCoroutine(FinishWindowRoutine());
         }
 
         NotifyPlayerFinishedClientRpc(clientId);
+
+        // If ALL connected players crossed the finish line before window expired:
+        if (NetworkManager.Singleton != null && finishedPlayers.Count >= NetworkManager.Singleton.ConnectedClientsIds.Count)
+        {
+            if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
+            NotifyBothFinishedClientRpc();
+            StartCoroutine(DelayedTransitionNextLevelRoutine(3.0f));
+        }
+    }
+
+    private IEnumerator FinishWindowRoutine()
+    {
+        float remaining = finishWindowDuration;
+        while (remaining > 0f)
+        {
+            finishWindowTimer.Value = remaining;
+            yield return new WaitForSeconds(1.0f);
+            remaining -= 1.0f;
+        }
+
+        finishWindowTimer.Value = 0f;
+
+        // Window expired! For any connected player who didn't finish, notify TimeIsLess and load next level
+        if (NetworkManager.Singleton != null)
+        {
+            foreach (ulong id in NetworkManager.Singleton.ConnectedClientsIds)
+            {
+                if (!finishedPlayers.Contains(id))
+                {
+                    NotifyTimeIsLessClientRpc(id);
+                }
+            }
+        }
+
+        StartCoroutine(DelayedTransitionNextLevelRoutine(2.5f));
     }
 
     [ClientRpc]
     private void NotifyPlayerFinishedClientRpc(ulong clientId)
     {
         OnPlayerFinished?.Invoke(clientId);
+    }
+
+    [ClientRpc]
+    private void NotifyBothFinishedClientRpc()
+    {
+        OnBothPlayersFinished?.Invoke();
+    }
+
+    [ClientRpc]
+    private void NotifyTimeIsLessClientRpc(ulong clientId)
+    {
+        OnPlayerTimeIsLess?.Invoke(clientId);
+    }
+
+    private IEnumerator DelayedTransitionNextLevelRoutine(float delaySeconds)
+    {
+        yield return new WaitForSeconds(delaySeconds);
+        LoadNextLevelServer();
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
@@ -186,11 +221,9 @@ public class NetworkRaceManager : NetworkBehaviour
             readyPlayerCount.Value = readyPlayersSet.Count;
             int totalRequired = NetworkManager.Singleton.ConnectedClientsIds.Count;
 
-            Debug.Log($"[NetworkRaceManager] Client {clientId} marked READY. Total Ready: {readyPlayersSet.Count}/{totalRequired}");
-
             if (readyPlayersSet.Count >= totalRequired)
             {
-                Debug.Log("[NetworkRaceManager] ALL PLAYERS READY! Loading next scene now...");
+                if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
                 readyPlayersSet.Clear();
                 readyPlayerCount.Value = 0;
                 LoadNextLevelServer();
@@ -201,6 +234,8 @@ public class NetworkRaceManager : NetworkBehaviour
     public void LoadNextLevelServer()
     {
         if (!IsServer) return;
+
+        if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
 
         int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
         if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
@@ -216,10 +251,6 @@ public class NetworkRaceManager : NetworkBehaviour
             {
                 SceneManager.LoadScene(nextSceneIndex);
             }
-        }
-        else
-        {
-            Debug.LogWarning("No next scene available in Build Settings.");
         }
     }
 }

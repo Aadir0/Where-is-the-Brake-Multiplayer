@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.UI;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using UnityEngine.InputSystem.UI;
 
 public class JustAButton : MonoBehaviour
 {
@@ -22,10 +22,6 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private Animator carAnimator;
     [SerializeField] private Animator panelAnim;
     [SerializeField] private string selectedBoolPrefix = "isSelected";
-    [SerializeField] private string playBoolName = "Play";
-    [SerializeField] private string stopBoolName = "Stop";
-    [SerializeField] private string playTriggerName = "Play";
-    [SerializeField] private string playStateName = "Play";
     [SerializeField] private AnimationClip playAnimation;
     [SerializeField] private AnimationClip stopAnimation;
 
@@ -43,7 +39,7 @@ public class JustAButton : MonoBehaviour
     private bool isBusy;
     private bool isOptionMenuOpen;
 
-    private void Awake() 
+    private void Awake()
     {
         DisableUIControllerSubmit();
     }
@@ -95,13 +91,6 @@ public class JustAButton : MonoBehaviour
     public void HostGame()
     {
         if (hostGameButton != null) AnimateButtonPress(hostGameButton);
-        StartCoroutine(HostGameRoutine());
-    }
-
-    private IEnumerator HostGameRoutine()
-    {
-        PlayPressAnimation();
-        yield return StartCoroutine(WaitForPlayAnimation());
         if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.CreateRoom();
@@ -111,13 +100,6 @@ public class JustAButton : MonoBehaviour
     public void JoinGame()
     {
         if (joinGameButton != null) AnimateButtonPress(joinGameButton);
-        StartCoroutine(JoinGameRoutine());
-    }
-
-    private IEnumerator JoinGameRoutine()
-    {
-        PlayPressAnimation();
-        yield return StartCoroutine(WaitForPlayAnimation());
         if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.OpenJoinUI();
@@ -169,10 +151,7 @@ public class JustAButton : MonoBehaviour
             if (EventSystem.current != null)
             {
                 EventSystem.current.SetSelectedGameObject(null);
-
-                EventSystem.current.SetSelectedGameObject(
-                    optionBackButton.gameObject
-                );
+                EventSystem.current.SetSelectedGameObject(optionBackButton.gameObject);
             }
 
             optionBackButton.Select();
@@ -309,20 +288,16 @@ public class JustAButton : MonoBehaviour
             }
         }
 
+        // Gamepad selection ONLY via D-Pad (Left Stick disabled for UI button selection)
         Gamepad gamepad = GetGamepad();
 
         if (gamepad != null)
         {
             float dpadY = gamepad.dpad.ReadValue().y;
-            float stickY = gamepad.leftStick.ReadValue().y;
 
             if (Mathf.Abs(dpadY) >= gamepadDeadzone)
             {
                 vertical = dpadY;
-            }
-            else if (Mathf.Abs(stickY) >= gamepadDeadzone)
-            {
-                vertical = stickY;
             }
         }
 
@@ -496,127 +471,6 @@ public class JustAButton : MonoBehaviour
         targetTransform.localScale = orig * 0.88f;
         yield return new WaitForSecondsRealtime(0.08f);
         targetTransform.localScale = orig;
-    }
-
-    public void PlayPressAnimation()
-    {
-        isBusy = true;
-
-        SetAnimatorBool(carAnimator, stopBoolName, false);
-        SetAnimatorBool(panelAnim, stopBoolName, false);
-        SetAnimatorBool(anim, stopBoolName, false);
-
-        SetAnimatorBool(carAnimator, playBoolName, true);
-        SetAnimatorBool(panelAnim, playBoolName, true);
-        SetAnimatorBool(anim, playBoolName, true);
-    }
-
-    public void PlayStopAnimation()
-    {
-        isBusy = true;
-
-        SetAnimatorBool(carAnimator, playBoolName, false);
-        SetAnimatorBool(panelAnim, playBoolName, false);
-        SetAnimatorBool(anim, playBoolName, false);
-
-        SetAnimatorBool(carAnimator, stopBoolName, true);
-        SetAnimatorBool(panelAnim, stopBoolName, true);
-        SetAnimatorBool(anim, stopBoolName, true);
-    }
-
-    public IEnumerator WaitForStopAnimation()
-    {
-        if (stopAnimation != null)
-        {
-            yield return new WaitForSecondsRealtime(stopAnimation.length);
-        }
-        else
-        {
-            yield return new WaitForSecondsRealtime(0.5f);
-        }
-
-        SetAnimatorBool(carAnimator, stopBoolName, false);
-        SetAnimatorBool(panelAnim, stopBoolName, false);
-        SetAnimatorBool(anim, stopBoolName, false);
-
-        isBusy = false;
-    }
-
-    public void ResetMenuAnimation()
-    {
-        isBusy = false;
-
-        SetAnimatorBool(carAnimator, playBoolName, false);
-        SetAnimatorBool(panelAnim, playBoolName, false);
-        SetAnimatorBool(anim, playBoolName, false);
-
-        SetAnimatorBool(carAnimator, stopBoolName, false);
-        SetAnimatorBool(panelAnim, stopBoolName, false);
-        SetAnimatorBool(anim, stopBoolName, false);
-
-        SelectButton(Mathf.Clamp(firstSelectedIndex, 0, Mathf.Max(0, buttons.Count - 1)));
-    }
-
-    private void SetAnimatorBool(Animator animator, string boolName, bool value)
-    {
-        if (animator == null || string.IsNullOrEmpty(boolName)) return;
-
-        if (HasAnimatorParameter(animator, boolName, AnimatorControllerParameterType.Bool))
-        {
-            animator.SetBool(boolName, value);
-        }
-        else if (value)
-        {
-            if (HasAnimatorParameter(animator, playTriggerName, AnimatorControllerParameterType.Trigger))
-            {
-                animator.SetTrigger(playTriggerName);
-            }
-            else if (!string.IsNullOrEmpty(playStateName))
-            {
-                try { animator.Play(playStateName, 0, 0f); } catch { }
-            }
-        }
-        else
-        {
-            if (HasAnimatorParameter(animator, playTriggerName, AnimatorControllerParameterType.Trigger))
-            {
-                animator.ResetTrigger(playTriggerName);
-            }
-        }
-    }
-
-    public IEnumerator WaitForPlayAnimation()
-    {
-        if (playAnimation != null)
-        {
-            yield return new WaitForSecondsRealtime(
-                playAnimation.length
-            );
-
-            yield break;
-        }
-
-        if (carAnimator == null ||
-            string.IsNullOrEmpty(playStateName))
-        {
-            yield break;
-        }
-
-        yield return null;
-
-        while (true)
-        {
-            AnimatorStateInfo stateInfo =
-                carAnimator.GetCurrentAnimatorStateInfo(0);
-
-            if (stateInfo.IsName(playStateName) &&
-                stateInfo.normalizedTime >= 1f)
-            {
-                yield break;
-            }
-
-            yield return null;
-        }
     }
 
     private bool HasAnimatorParameter(

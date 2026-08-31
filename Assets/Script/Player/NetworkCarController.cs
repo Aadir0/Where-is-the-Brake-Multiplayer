@@ -1,9 +1,23 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using TMPro;
 using Unity.Netcode;
 using Unity.Netcode.Components;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
+
+[System.Serializable]
+public struct SceneJumpOverride
+{
+    public string sceneName;
+    public float jumpDuration;
+    public float jumpCooldown;
+    public float speed;
+    public float turnSpeed;
+    public bool continuousJump;
+}
 
 [RequireComponent(typeof(Rigidbody2D))]
 [RequireComponent(typeof(SpriteRenderer))]
@@ -11,46 +25,73 @@ using UnityEngine.InputSystem;
 public class NetworkCarController : NetworkBehaviour
 {
     [Header("Movement")]
-    [SerializeField] private float speed = 8f;
-    public float turnSpeed = 140f;
+    [SerializeField] private float speed = 8.5f;
+    public float turnSpeed = 220f; // Snappy 360-degree rotational responsiveness
     [SerializeField] private InputActionReference moveAction;
-    [SerializeField] private InputActionReference BoostAction;
-
-    [Header("Speed Boost")]
-    [SerializeField] private float speedBoostAmount = 5f;
-    [SerializeField] private float speedBoostDuration = 0.3f;
-    [SerializeField] private float speedBoostInterval = 1f;
+    [SerializeField] private InputActionReference JumpAction;
 
     public float currentSpeed;
     private float boostCooldownTimer;
-    private Coroutine speedBoostCoroutine;
 
-    [Header("Drift")]
-    [SerializeField] private float driftTurnMultiplier = 1.7f;
-    [SerializeField] private float driftFactor = 0.8f;
-    [SerializeField] private float driftIntensity = 0.5f;
+    [Header("Drift & Smooth Handling")]
+    [SerializeField] private float driftTurnMultiplier = 1.45f;
+    [SerializeField] private float driftFactor = 0.94f; // Responsive traction
+    [SerializeField] private float driftIntensity = 0.82f;
+
+    [Header("Pre-Start Wobble Indicator Settings")]
+    [SerializeField] private GameObject startPromptVisual;
+    [SerializeField] private Vector3 promptScale = Vector3.one; // Inspector field to easily resize visual prompt
+    [SerializeField] private Vector3 promptOffset = new Vector3(1.2f, 0f, -0.5f); // Positioned just ahead of the player car!
+    [SerializeField] private float wobbleSpeed = 2.5f;
+    [SerializeField] private float wobbleHeight = 0.04f; // Very subtle vertical wobble
+    [SerializeField] private float promptPulseSpeed = 2.5f;
+    [SerializeField] private float promptPulseAmount = 0.06f; // Gentle scale up/down (±6%)
+    private Vector3 initialPromptLocalPos;
+
+    [Header("Car Start Effect")]
+    [SerializeField] private GameObject carStartEffectPrefab;
+    [SerializeField] private float carStartEffectLifetime = 1.0f;
 
     [Header("Boundary Drift")]
     [SerializeField] private float boundaryTurnMultiplier = 1.8f;
     [SerializeField] private float boundaryDriftCooldown = 0.4f;
-    [SerializeField] private float boundaryDriftThresholdMultiplier = 2f;
     private float boundaryDriftTimer;
+    private bool isTouchingBoundary = false;
 
-    [Header("Jump Effect")]
-    [SerializeField] private InputActionReference JumpAction;
-    [SerializeField] private float jumpDuration = 0.3f;
+    [Header("Surface Modifiers (Mud / Slime / Oil)")]
+    private float surfaceSpeedMultiplier = 1.0f;
+    private float surfaceDriftMultiplier = 1.0f;
+    private bool isInSurfaceModifierZone = false;
+
+    [Header("Jump Effect Settings")]
+    [SerializeField] private float jumpDuration = 0.32f;
     [SerializeField] private float jumpCooldown = 1.5f;
-    [SerializeField] private float carJumpScale = 0.8f;
+    [SerializeField] private float carJumpScale = 1.32f; // Scales UP cleanly for arcade elevation
     [SerializeField] private ShadowJump shadowPrefab;
     [SerializeField] private GameObject jumpEffectPrefab;
+
+    [Header("Landing Camera Shake")]
+    [SerializeField] private float landingShakeDuration = 0.12f;
+    [SerializeField] private float landingShakeIntensity = 0.18f;
+
+    [Header("Per-Scene Overrides")]
+    [SerializeField] private List<SceneJumpOverride> sceneJumpOverrides = new List<SceneJumpOverride>();
+
     private GameObject spawnedJumpEffect;
     private InputAction fallbackJumpAction;
     private Vector3 originalCarScale;
     private Coroutine jumpCoroutine;
     private ShadowJump spawnedShadow;
     private bool canJump = false; // Jump unlocked strictly upon contact with JumpTrigger
+    private bool continuousJump = false; // When true, auto-jumps while inside JumpTrigger
     private bool isJumping = false; // Prevents tyre mark spawning while airborne
+    private float jumpStartTime = -100f;
     private float nextJumpTime = 0f;
+    private int lastActionFrame = -1; // Single-frame lock to prevent double execution on 1st press
+
+    public bool IsJumping => isJumping;
+    public float JumpDuration => jumpDuration;
+    public bool IsJumpDurationExpired => (Time.time - jumpStartTime) >= jumpDuration;
 
     [Header("Jump Collision")]
     [SerializeField] private int playerLayer = 6;
@@ -77,10 +118,8 @@ public class NetworkCarController : NetworkBehaviour
 
     [Header("Car Sound Effects")]
     [SerializeField] private AudioClip engineStartSound;
-    [SerializeField] private AudioClip engineRunningSound;
     [SerializeField] private AudioClip driftSound;
     [SerializeField] private AudioClip jumpSound;
-    [SerializeField] private AudioSource engineAudioSource;
     [SerializeField] private AudioSource driftAudioSource;
     [SerializeField] private AudioSource effectsAudioSource;
 
@@ -103,14 +142,12 @@ public class NetworkCarController : NetworkBehaviour
     private CapsuleCollider2D boxCollider;
     private CarHealth healthComp;
     private InputAction fallbackMoveAction;
-    private InputAction fallbackBoostAction;
 
     // Owner-authoritative physics state
-    private bool isBoosted = false;
+    private bool isBoosted = false; // Represents whether car movement has started
     public bool hasWonPlayer { get; private set; } = false;
 
     private InputAction MoveInput => moveAction != null ? moveAction.action : fallbackMoveAction;
-    private InputAction BoostInput => BoostAction != null ? BoostAction.action : fallbackBoostAction;
     private InputAction JumpInput => JumpAction != null ? JumpAction.action : fallbackJumpAction;
 
     private void Awake()
@@ -120,26 +157,144 @@ public class NetworkCarController : NetworkBehaviour
         boxCollider = GetComponent<CapsuleCollider2D>();
         healthComp = GetComponent<CarHealth>();
 
+        if (rb != null)
+        {
+            rb.interpolation = RigidbodyInterpolation2D.Interpolate; // Enable physics interpolation for silky smooth 60/144fps movement
+        }
+
         originalCarScale = transform.localScale;
         currentSpeed = speed;
         canJump = false;
         isJumping = false;
+        jumpStartTime = -100f;
+        isTouchingBoundary = false;
+        lastActionFrame = -1;
 
+        ApplyLevelJumpSettings();
+        SetupStartPromptVisual();
         InitializeAudioSources();
         CreateFallbackActions();
         InitializeTyrePositions();
     }
 
-    private void InitializeAudioSources()
+    public void ApplyLevelJumpSettings()
     {
-        if (engineAudioSource == null)
+        if (LevelJumpSettings.Instance != null)
         {
-            engineAudioSource = gameObject.AddComponent<AudioSource>();
-            engineAudioSource.loop = true;
-            engineAudioSource.playOnAwake = false;
-            engineAudioSource.spatialBlend = 0.5f;
+            if (LevelJumpSettings.Instance.EnableJumpOverride)
+            {
+                jumpDuration = LevelJumpSettings.Instance.LevelJumpDuration;
+                jumpCooldown = LevelJumpSettings.Instance.LevelJumpCooldown;
+                continuousJump = LevelJumpSettings.Instance.ContinuousJump;
+            }
+
+            if (LevelJumpSettings.Instance.EnableSpeedOverride)
+            {
+                speed = LevelJumpSettings.Instance.LevelSpeed;
+                turnSpeed = LevelJumpSettings.Instance.LevelTurnSpeed;
+                if (!isBoosted) currentSpeed = speed;
+            }
+            return;
         }
 
+        string currentScene = SceneManager.GetActiveScene().name;
+        if (sceneJumpOverrides != null && sceneJumpOverrides.Count > 0)
+        {
+            foreach (var overrideItem in sceneJumpOverrides)
+            {
+                if (string.Equals(overrideItem.sceneName, currentScene, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (overrideItem.jumpDuration > 0f) jumpDuration = overrideItem.jumpDuration;
+                    jumpCooldown = overrideItem.jumpCooldown; // Allow 0 cooldown
+                    continuousJump = overrideItem.continuousJump;
+                    if (overrideItem.speed > 0f)
+                    {
+                        speed = overrideItem.speed;
+                        if (!isBoosted) currentSpeed = speed;
+                    }
+                    if (overrideItem.turnSpeed > 0f) turnSpeed = overrideItem.turnSpeed;
+                    return;
+                }
+            }
+        }
+    }
+
+    private void SetupStartPromptVisual()
+    {
+        if (startPromptVisual != null && !startPromptVisual.scene.isLoaded)
+        {
+            startPromptVisual = Instantiate(startPromptVisual, transform);
+        }
+
+        if (startPromptVisual == null)
+        {
+            foreach (Transform child in transform)
+            {
+                string cName = child.name.ToLower();
+                if (cName.Contains("start") || cName.Contains("prompt") || cName.Contains("indicator") || cName.Contains("visual") || child.CompareTag("StartPrompt"))
+                {
+                    startPromptVisual = child.gameObject;
+                    break;
+                }
+            }
+
+            if (startPromptVisual == null)
+            {
+                GameObject generatedPrompt = new GameObject("StartPromptVisual");
+                generatedPrompt.transform.SetParent(transform, false);
+
+                TextMeshPro tmPro = generatedPrompt.AddComponent<TextMeshPro>();
+                tmPro.text = "PRESS SPACE / [A] TO START";
+                tmPro.fontSize = 2.5f;
+                tmPro.alignment = TextAlignmentOptions.Center;
+                tmPro.color = Color.yellow;
+                tmPro.sortingOrder = 50;
+
+                startPromptVisual = generatedPrompt;
+            }
+        }
+
+        if (startPromptVisual != null)
+        {
+            if (startPromptVisual.transform.parent != transform)
+            {
+                startPromptVisual.transform.SetParent(transform, false);
+            }
+
+            initialPromptLocalPos = promptOffset;
+            startPromptVisual.transform.localPosition = initialPromptLocalPos;
+            startPromptVisual.transform.localScale = promptScale;
+
+            SpriteRenderer promptSr = startPromptVisual.GetComponent<SpriteRenderer>();
+            if (promptSr == null) promptSr = startPromptVisual.GetComponentInChildren<SpriteRenderer>(true);
+
+            if (promptSr != null)
+            {
+                promptSr.enabled = true;
+                if (spriteRenderer != null)
+                {
+                    promptSr.sortingLayerID = spriteRenderer.sortingLayerID;
+                    promptSr.sortingOrder = spriteRenderer.sortingOrder + 30;
+                }
+                else
+                {
+                    promptSr.sortingOrder = 30;
+                }
+            }
+
+            Renderer rend = startPromptVisual.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                rend.enabled = true;
+                rend.sortingOrder = 50;
+            }
+
+            startPromptVisual.SetActive(!isBoosted && !hasWonPlayer);
+        }
+    }
+
+    private void InitializeAudioSources()
+    {
         if (driftAudioSource == null)
         {
             driftAudioSource = gameObject.AddComponent<AudioSource>();
@@ -161,13 +316,17 @@ public class NetworkCarController : NetworkBehaviour
     {
         canJump = false;
         isJumping = false;
+        jumpStartTime = -100f;
+        isTouchingBoundary = false;
+        lastActionFrame = -1;
+
+        ApplyLevelJumpSettings();
+        SetupStartPromptVisual();
 
         if (rb != null)
         {
             rb.simulated = true;
             rb.interpolation = RigidbodyInterpolation2D.Interpolate;
-
-            // Owner-authoritative physics: Owner simulates Dynamic Rigidbody2D dynamics, remote clients stay Kinematic
             rb.bodyType = (IsOwner || IsLocalPlayer) ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
         }
 
@@ -189,13 +348,8 @@ public class NetworkCarController : NetworkBehaviour
         if (IsOwner || IsLocalPlayer)
         {
             EnableInput(MoveInput);
-            EnableInput(BoostInput);
             EnableInput(JumpInput);
 
-            if (BoostInput != null) BoostInput.performed += OnBoostPerformed;
-            if (JumpInput != null) JumpInput.performed += OnJumpPerformed;
-
-            // Connect camera
             CameraFollow camFollow = Camera.main != null ? Camera.main.GetComponent<CameraFollow>() : null;
             if (camFollow != null)
             {
@@ -215,11 +369,7 @@ public class NetworkCarController : NetworkBehaviour
 
         if (IsOwner || IsLocalPlayer)
         {
-            if (BoostInput != null) BoostInput.performed -= OnBoostPerformed;
-            if (JumpInput != null) JumpInput.performed -= OnJumpPerformed;
-
             DisableInput(MoveInput);
-            DisableInput(BoostInput);
             DisableInput(JumpInput);
         }
 
@@ -252,6 +402,12 @@ public class NetworkCarController : NetworkBehaviour
     {
         hasWonPlayer = true;
         isBoosted = false;
+
+        if (startPromptVisual != null)
+        {
+            startPromptVisual.SetActive(false);
+        }
+
         if (rb != null)
         {
             rb.linearVelocity = Vector2.zero;
@@ -296,12 +452,26 @@ public class NetworkCarController : NetworkBehaviour
         isBoosted = false;
         canJump = false;
         isJumping = false;
-        currentSpeed = speed;
-        boostCooldownTimer = 0f;
+        jumpStartTime = -100f;
+        boostCooldownTimer = 0.5f;
         nextJumpTime = 0f;
+        isTouchingBoundary = false;
+        lastActionFrame = -1;
+        ResetSurfaceModifiers();
+
+        ApplyLevelJumpSettings();
+        currentSpeed = speed;
+        SetupStartPromptVisual();
+
+        if (boxCollider != null)
+        {
+            boxCollider.gameObject.layer = playerLayer;
+        }
+        transform.localScale = originalCarScale;
 
         if (rb != null)
         {
+            rb.interpolation = RigidbodyInterpolation2D.Interpolate;
             rb.bodyType = (IsOwner || IsLocalPlayer) ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
             rb.simulated = true;
             rb.linearVelocity = Vector2.zero;
@@ -311,14 +481,91 @@ public class NetworkCarController : NetworkBehaviour
         StopCarAudio();
     }
 
+    public void ApplySurfaceModifiers(float speedMult, float driftMult)
+    {
+        surfaceSpeedMultiplier = speedMult;
+        surfaceDriftMultiplier = driftMult;
+        isInSurfaceModifierZone = true;
+    }
+
+    public void ResetSurfaceModifiers()
+    {
+        surfaceSpeedMultiplier = 1.0f;
+        surfaceDriftMultiplier = 1.0f;
+        isInSurfaceModifierZone = false;
+    }
+
     public void EnableJump()
     {
+        if (isJumping) return; // Ignore jump triggers while mid-air to prevent double jumps!
         canJump = true;
-        Debug.Log($"[NetworkCarController SUCCESS] Jump Unlocked by JumpTrigger contact for Player Car (IsOwner: {IsOwner})!");
+
+
+        // In continuous jump mode, auto-execute jump immediately without waiting for button press
+        if (continuousJump && isBoosted && !hasWonPlayer)
+        {
+            TryExecuteJump();
+        }
+    }
+
+    private void CheckJumpDurationExpiration()
+    {
+        if (isJumping && IsJumpDurationExpired)
+        {
+            if (jumpCoroutine != null)
+            {
+                StopCoroutine(jumpCoroutine);
+                jumpCoroutine = null;
+            }
+
+            OnLandingGround();
+        }
+    }
+
+    private void OnLandingGround()
+    {
+        if (!isJumping) return;
+
+        isJumping = false;
+        nextJumpTime = 0f; // Reset jump cooldown immediately upon landing back on Ground layer!
+
+        if (boxCollider != null)
+        {
+            boxCollider.gameObject.layer = playerLayer;
+        }
+        transform.localScale = originalCarScale;
+
+        if (IsOwner || IsLocalPlayer)
+        {
+            if (CameraFollow.Instance != null)
+            {
+                CameraFollow.Instance.TriggerShake(landingShakeDuration, landingShakeIntensity);
+            }
+        }
+
+        if (healthComp != null)
+        {
+            healthComp.CheckImmediateHoleOverlap();
+        }
     }
 
     private void Update()
     {
+        if (!isBoosted && !hasWonPlayer && startPromptVisual != null)
+        {
+            if (!startPromptVisual.activeSelf) startPromptVisual.SetActive(true);
+
+            float bob = Mathf.Sin(Time.time * wobbleSpeed) * wobbleHeight;
+            float pulse = 1f + (Mathf.Sin(Time.time * promptPulseSpeed) * promptPulseAmount);
+
+            startPromptVisual.transform.localPosition = initialPromptLocalPos + new Vector3(0f, bob, 0f);
+            startPromptVisual.transform.localScale = promptScale * pulse;
+        }
+        else if ((isBoosted || hasWonPlayer) && startPromptVisual != null && startPromptVisual.activeSelf)
+        {
+            startPromptVisual.SetActive(false);
+        }
+
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
         if (healthComp != null && healthComp.isDead.Value)
@@ -327,8 +574,9 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        // Stop all controls when TimeOver UI is displayed
-        if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value)
+        CheckJumpDurationExpiration();
+
+        if (LevelTimer.Instance != null && LevelTimer.Instance.IsTimeOver)
         {
             isBoosted = false;
             if (rb != null)
@@ -340,43 +588,16 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        // Boost Input Check: ONLY X Key (Keyboard) or Gamepad buttonSouth (A/Cross)
-        bool boostPressed = false;
-        if (Keyboard.current != null && Keyboard.current.xKey.wasPressedThisFrame)
+        bool actionPressed = false;
+
+        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
         {
-            boostPressed = true;
+            actionPressed = true;
         }
 
         if (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame)
         {
-            boostPressed = true;
-        }
-
-        if (BoostInput != null)
-        {
-            try
-            {
-                if (!BoostInput.enabled) BoostInput.Enable();
-                if (BoostInput.WasPressedThisFrame()) boostPressed = true;
-            }
-            catch { }
-        }
-
-        if (boostPressed)
-        {
-            TriggerBoostLocal();
-        }
-
-        // Jump Input Check: ONLY Spacebar (Keyboard) or Gamepad buttonNorth (Y/Triangle)
-        bool jumpPressed = false;
-        if (Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame)
-        {
-            jumpPressed = true;
-        }
-
-        if (Gamepad.current != null && Gamepad.current.buttonNorth.wasPressedThisFrame)
-        {
-            jumpPressed = true;
+            actionPressed = true;
         }
 
         if (JumpInput != null)
@@ -384,80 +605,82 @@ public class NetworkCarController : NetworkBehaviour
             try
             {
                 if (!JumpInput.enabled) JumpInput.Enable();
-                if (JumpInput.WasPressedThisFrame()) jumpPressed = true;
+                if (JumpInput.WasPressedThisFrame()) actionPressed = true;
             }
             catch { }
         }
 
-        if (jumpPressed)
+        if (actionPressed)
+        {
+            HandleActionPressed();
+        }
+    }
+
+    private void HandleActionPressed()
+    {
+        if (!IsOwner && !IsLocalPlayer) return;
+
+        if (Time.frameCount == lastActionFrame) return;
+        lastActionFrame = Time.frameCount;
+
+        if (!isBoosted)
+        {
+            if (boostCooldownTimer > 0f) return;
+
+            isBoosted = true;
+            currentSpeed = speed;
+
+            if (startPromptVisual != null)
+            {
+                startPromptVisual.SetActive(false);
+            }
+
+            if (carStartEffectPrefab != null)
+            {
+                GameObject startFX = Instantiate(carStartEffectPrefab, transform.position, Quaternion.identity);
+                Destroy(startFX, carStartEffectLifetime);
+            }
+
+            if (effectsAudioSource != null && engineStartSound != null)
+            {
+                effectsAudioSource.PlayOneShot(engineStartSound);
+            }
+        }
+        else
         {
             TryExecuteJump();
         }
     }
 
-    private void TriggerBoostLocal()
+    private void LateUpdate()
     {
-        if (!IsOwner && !IsLocalPlayer) return;
-
-        if (!isBoosted)
+        if (IsOwner || IsLocalPlayer)
         {
-            // First press: Starts car movement at normal base speed without applying speed boost amount
-            Debug.Log($"[NetworkCarController SUCCESS] Car Movement Started by Local Player (IsOwner: {IsOwner})");
-            isBoosted = true;
-            currentSpeed = speed;
-            boostCooldownTimer = speedBoostInterval;
-
-            // Play Engine Start sound effect
-            if (effectsAudioSource != null && engineStartSound != null)
-            {
-                effectsAudioSource.PlayOneShot(engineStartSound);
-            }
-
-            NotifyBoostStartedRpc();
+            CheckJumpDurationExpiration();
         }
-        else if (boostCooldownTimer <= 0f)
-        {
-            // Subsequent presses: Triggers speed boost burst
-            Debug.Log($"[NetworkCarController SUCCESS] Speed Boost Burst Triggered by Local Player (IsOwner: {IsOwner})");
-            if (speedBoostCoroutine != null) StopCoroutine(speedBoostCoroutine);
-            speedBoostCoroutine = StartCoroutine(SpeedBoostEffect());
-        }
-    }
-
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    private void NotifyBoostStartedRpc()
-    {
-        // Shared state notification to server
     }
 
     private void TryExecuteJump()
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (!isBoosted || (healthComp != null && healthComp.isDead.Value) || hasWonPlayer) return;
-        if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value) return;
+        if (LevelTimer.Instance != null && LevelTimer.Instance.IsTimeOver) return;
 
-        if (!canJump)
-        {
-            Debug.Log("[NetworkCarController] Cannot Jump — JumpTrigger contact required to unlock jump!");
-            return;
-        }
+        if (isJumping) return;
+        if (!canJump) return;
 
-        if (Time.time < nextJumpTime)
-        {
-            Debug.Log($"[NetworkCarController] Jump on Cooldown! Remaining: {nextJumpTime - Time.time:F1}s");
-            return;
-        }
+        ApplyLevelJumpSettings();
+
+        if (Time.time < nextJumpTime) return;
 
         nextJumpTime = Time.time + jumpCooldown;
-        canJump = false; // Consume jump pickup
+        canJump = false;
 
-        Debug.Log($"[NetworkCarController SUCCESS] Executing Jump with {jumpCooldown}s Cooldown (IsOwner: {IsOwner})!");
         TriggerJumpRpc();
     }
 
     private void FixedUpdate()
     {
-        // Owner drives physics simulation locally with zero input latency
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
         if (healthComp != null && healthComp.isDead.Value)
@@ -466,7 +689,9 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        if (LevelTimer.Instance != null && LevelTimer.Instance.isTimeOver.Value)
+        CheckJumpDurationExpiration();
+
+        if (LevelTimer.Instance != null && LevelTimer.Instance.IsTimeOver)
         {
             isBoosted = false;
             if (rb != null)
@@ -488,7 +713,6 @@ public class NetworkCarController : NetworkBehaviour
             boundaryDriftTimer -= Time.fixedDeltaTime;
         }
 
-        // Stationary until Boost is activated
         if (!isBoosted)
         {
             if (rb != null)
@@ -499,36 +723,71 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        float turn = ReadTurnInput();
-        float absTurn = Mathf.Abs(turn);
+        Vector2 moveInput = ReadMoveVectorInput();
+        float targetRotation = rb.rotation;
+        float turnMagnitude = 0f;
 
-        float turnBoost = Mathf.Lerp(1f, driftTurnMultiplier, absTurn);
-        if (boundaryDriftTimer > 0f)
+        if (moveInput.sqrMagnitude > 0.04f)
         {
-            turnBoost *= boundaryTurnMultiplier;
+            float targetAngle = Mathf.Atan2(moveInput.y, moveInput.x) * Mathf.Rad2Deg;
+            float activeDriftMultiplier = isInSurfaceModifierZone ? (driftTurnMultiplier * surfaceDriftMultiplier) : driftTurnMultiplier;
+
+            float angleDiff = Mathf.Abs(Mathf.DeltaAngle(rb.rotation, targetAngle));
+            turnMagnitude = Mathf.Clamp01(angleDiff / 90f);
+
+            float turnBoost = Mathf.Lerp(1f, activeDriftMultiplier, turnMagnitude);
+            if (boundaryDriftTimer > 0f) turnBoost *= boundaryTurnMultiplier;
+
+            float currentTurnSpeed = turnSpeed * turnBoost;
+            targetRotation = Mathf.MoveTowardsAngle(rb.rotation, targetAngle, currentTurnSpeed * Time.fixedDeltaTime);
+            rb.MoveRotation(targetRotation);
         }
-
-        float currentTurnSpeed = turnSpeed * turnBoost;
-        float targetRotation = rb.rotation - turn * currentTurnSpeed * Time.fixedDeltaTime;
-
-        rb.MoveRotation(targetRotation);
 
         float rotationRadians = targetRotation * Mathf.Deg2Rad;
         Vector2 forwardDirection = new Vector2(Mathf.Cos(rotationRadians), Mathf.Sin(rotationRadians));
-        Vector2 desiredVelocity = forwardDirection * currentSpeed;
 
-        if (absTurn > 0.5f)
-        {
-            float currentDrift = Mathf.Lerp(driftFactor, driftIntensity, (absTurn - 0.5f) * 2f);
-            rb.linearVelocity = Vector2.Lerp(rb.linearVelocity, desiredVelocity, currentDrift);
-        }
-        else
-        {
-            rb.linearVelocity = Vector2.Lerp(rb.linearVelocity, desiredVelocity, driftFactor);
-        }
+        float effectiveSpeed = isInSurfaceModifierZone ? (currentSpeed * surfaceSpeedMultiplier) : currentSpeed;
+        Vector2 desiredVelocity = forwardDirection * effectiveSpeed;
 
-        UpdateTyreMarks(turn);
-        UpdateCarAudio(turn);
+        float driftFactorBlend = Mathf.Lerp(driftFactor, driftIntensity, turnMagnitude);
+        float lerpRate = Mathf.Lerp(18f, 26f, driftFactorBlend);
+        rb.linearVelocity = Vector2.Lerp(rb.linearVelocity, desiredVelocity, 1f - Mathf.Exp(-lerpRate * Time.fixedDeltaTime));
+
+        UpdateTyreMarks(turnMagnitude);
+        UpdateCarAudio(turnMagnitude);
+    }
+
+    private bool IsBoundaryCollision(Collision2D collision)
+    {
+        if (collision == null || collision.gameObject == null) return false;
+        return collision.gameObject.CompareTag("Boundary") ||
+               string.Equals(LayerMask.LayerToName(collision.gameObject.layer), "Boundary", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void OnCollisionEnter2D(Collision2D collision)
+    {
+        if (IsBoundaryCollision(collision))
+        {
+            isTouchingBoundary = true;
+            ApplyBoundaryDrift();
+        }
+    }
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        if (IsBoundaryCollision(collision))
+        {
+            isTouchingBoundary = true;
+            ApplyBoundaryDrift();
+        }
+    }
+
+    private void OnCollisionExit2D(Collision2D collision)
+    {
+        if (IsBoundaryCollision(collision))
+        {
+            isTouchingBoundary = false;
+        }
     }
 
     private void UpdateCarAudio(float turn)
@@ -536,10 +795,9 @@ public class NetworkCarController : NetworkBehaviour
         float sidewaysVel = GetSidewaysVelocity();
         bool isDrifting = Mathf.Abs(turn) >= 0.35f && Mathf.Abs(sidewaysVel) >= driftThreshold && !isJumping;
 
-        // 1. Handle Drift Audio (screeching tires when drift threshold reached)
         if (isDrifting && driftSound != null)
         {
-            if (!driftAudioSource.isPlaying || driftAudioSource.clip != driftSound)
+            if (driftAudioSource != null && (!driftAudioSource.isPlaying || driftAudioSource.clip != driftSound))
             {
                 driftAudioSource.clip = driftSound;
                 driftAudioSource.Play();
@@ -547,57 +805,16 @@ public class NetworkCarController : NetworkBehaviour
         }
         else
         {
-            if (driftAudioSource.isPlaying)
+            if (driftAudioSource != null && driftAudioSource.isPlaying)
             {
                 driftAudioSource.Stop();
-            }
-        }
-
-        // 2. Handle Engine Running Audio
-        if (engineRunningSound != null && !isJumping)
-        {
-            if (!engineAudioSource.isPlaying || engineAudioSource.clip != engineRunningSound)
-            {
-                engineAudioSource.clip = engineRunningSound;
-                engineAudioSource.Play();
-            }
-
-            engineAudioSource.volume = isDrifting ? 0.45f : 1.0f;
-        }
-        else
-        {
-            if (engineAudioSource.isPlaying)
-            {
-                engineAudioSource.Stop();
             }
         }
     }
 
     private void StopCarAudio()
     {
-        if (engineAudioSource != null && engineAudioSource.isPlaying) engineAudioSource.Stop();
         if (driftAudioSource != null && driftAudioSource.isPlaying) driftAudioSource.Stop();
-    }
-
-    private void OnBoostPerformed(InputAction.CallbackContext context)
-    {
-        TriggerBoostLocal();
-    }
-
-    private IEnumerator SpeedBoostEffect()
-    {
-        boostCooldownTimer = speedBoostInterval;
-        currentSpeed = speed + speedBoostAmount;
-
-        yield return new WaitForSeconds(speedBoostDuration);
-
-        currentSpeed = speed;
-        speedBoostCoroutine = null;
-    }
-
-    private void OnJumpPerformed(InputAction.CallbackContext context)
-    {
-        TryExecuteJump();
     }
 
     [Rpc(SendTo.Everyone)]
@@ -613,6 +830,7 @@ public class NetworkCarController : NetworkBehaviour
     private IEnumerator JumpEffect()
     {
         isJumping = true;
+        jumpStartTime = Time.time;
         StopCarAudio();
 
         if (effectsAudioSource != null && jumpSound != null)
@@ -645,56 +863,30 @@ public class NetworkCarController : NetworkBehaviour
             }
         }
 
-        // Change layer to jumpCollisionLayer for exactly jumpDuration seconds
         if (boxCollider != null)
         {
             boxCollider.gameObject.layer = jumpCollisionLayer;
         }
 
-        float halfDuration = jumpDuration * 0.5f;
         float elapsedTime = 0f;
-        Vector3 targetScale = originalCarScale * carJumpScale;
+        Vector3 peakScale = originalCarScale * carJumpScale;
 
-        // Scale up phase (first 50% of jumpDuration)
-        while (elapsedTime < halfDuration)
+        try
         {
-            elapsedTime += Time.deltaTime;
-            float t = elapsedTime / halfDuration;
-            transform.localScale = Vector3.Lerp(
-                originalCarScale,
-                targetScale,
-                t
-            );
+            while (elapsedTime < jumpDuration && isJumping)
+            {
+                elapsedTime += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsedTime / jumpDuration);
+                float arc = Mathf.Sin(t * Mathf.PI);
 
-            yield return null;
+                transform.localScale = Vector3.Lerp(originalCarScale, peakScale, arc);
+                yield return null;
+            }
         }
-
-        transform.localScale = targetScale;
-        elapsedTime = 0f;
-
-        // Scale down phase (second 50% of jumpDuration)
-        while (elapsedTime < halfDuration)
+        finally
         {
-            elapsedTime += Time.deltaTime;
-            float t = elapsedTime / halfDuration;
-            transform.localScale = Vector3.Lerp(
-                targetScale,
-                originalCarScale,
-                t
-            );
-
-            yield return null;
+            OnLandingGround();
         }
-
-        transform.localScale = originalCarScale;
-
-        // Revert layer back to playerLayer immediately when jumpDuration completes
-        if (boxCollider != null)
-        {
-            boxCollider.gameObject.layer = playerLayer;
-        }
-
-        isJumping = false;
     }
 
     public void ApplyBoundaryDrift()
@@ -702,35 +894,38 @@ public class NetworkCarController : NetworkBehaviour
         boundaryDriftTimer = boundaryDriftCooldown;
     }
 
-    private float ReadTurnInput()
+    private Vector2 ReadMoveVectorInput()
     {
-        float input = 0f;
+        Vector2 input = Vector2.zero;
 
-        // 1. New Input System Action
         if (MoveInput != null)
         {
             try
             {
                 if (!MoveInput.enabled) MoveInput.Enable();
-                input = MoveInput.ReadValue<Vector2>().x;
+                input = MoveInput.ReadValue<Vector2>();
             }
             catch { }
         }
 
-        // 2. Pure Unity 6 Keyboard check (No legacy Input.GetKey crash!)
-        if (Mathf.Abs(input) < 0.01f && Keyboard.current != null)
+        if (input.sqrMagnitude < 0.01f && Keyboard.current != null)
         {
-            if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) input = -1f;
-            else if (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) input = 1f;
+            float x = 0f;
+            float y = 0f;
+            if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) x -= 1f;
+            if (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) x += 1f;
+            if (Keyboard.current.wKey.isPressed || Keyboard.current.upArrowKey.isPressed) y += 1f;
+            if (Keyboard.current.sKey.isPressed || Keyboard.current.downArrowKey.isPressed) y -= 1f;
+
+            if (x != 0f || y != 0f) input = new Vector2(x, y);
         }
 
-        // 3. Pure Unity 6 Gamepad check
-        if (Mathf.Abs(input) < 0.01f && Gamepad.current != null)
+        if (input.sqrMagnitude < 0.01f && Gamepad.current != null)
         {
-            float stickX = Gamepad.current.leftStick.x.ReadValue();
-            float dpadX = Gamepad.current.dpad.x.ReadValue();
-            if (Mathf.Abs(stickX) > 0.1f) input = stickX;
-            else if (Mathf.Abs(dpadX) > 0.1f) input = dpadX;
+            Vector2 stick = Gamepad.current.leftStick.ReadValue();
+            Vector2 dpad = Gamepad.current.dpad.ReadValue();
+            if (stick.sqrMagnitude > 0.04f) input = stick;
+            else if (dpad.sqrMagnitude > 0.04f) input = dpad;
         }
 
         return input;
@@ -758,20 +953,11 @@ public class NetworkCarController : NetworkBehaviour
             fallbackMoveAction.Enable();
         }
 
-        if (BoostAction == null && fallbackBoostAction == null)
-        {
-            fallbackBoostAction = new InputAction("FallbackBoost", InputActionType.Button);
-            fallbackBoostAction.AddBinding("<Keyboard>/x");
-            fallbackBoostAction.AddBinding("<Gamepad>/buttonSouth");
-
-            fallbackBoostAction.Enable();
-        }
-
         if (JumpAction == null && fallbackJumpAction == null)
         {
             fallbackJumpAction = new InputAction("FallbackJump", InputActionType.Button);
             fallbackJumpAction.AddBinding("<Keyboard>/space");
-            fallbackJumpAction.AddBinding("<Gamepad>/buttonNorth");
+            fallbackJumpAction.AddBinding("<Gamepad>/buttonSouth");
 
             fallbackJumpAction.Enable();
         }
@@ -810,18 +996,13 @@ public class NetworkCarController : NetworkBehaviour
 
     private void UpdateTyreMarks(float turn)
     {
-        // Disable tyre marks while airborne / jumping
         if (isJumping || (boxCollider != null && boxCollider.gameObject.layer == jumpCollisionLayer)) return;
+        if (isTouchingBoundary || boundaryDriftTimer > 0f) return;
 
         if (Mathf.Abs(turn) < 0.35f) return;
 
         float sidewaysVelocity = GetSidewaysVelocity();
         float currentDriftThreshold = driftThreshold;
-
-        if (boundaryDriftTimer > 0f)
-        {
-            currentDriftThreshold *= boundaryDriftThresholdMultiplier;
-        }
 
         if (Mathf.Abs(sidewaysVelocity) < currentDriftThreshold) return;
 
@@ -862,7 +1043,6 @@ public class NetworkCarController : NetworkBehaviour
         }
         else
         {
-            // Fallback visual tyre mark creation if prefab reference is missing
             GameObject fallbackMark = GameObject.CreatePrimitive(PrimitiveType.Quad);
             fallbackMark.transform.position = new Vector3(position.x, position.y, 0.1f);
             fallbackMark.transform.rotation = Quaternion.Euler(0f, 0f, rotationDegrees);
@@ -882,7 +1062,6 @@ public class NetworkCarController : NetworkBehaviour
     {
         base.OnDestroy();
         fallbackMoveAction?.Dispose();
-        fallbackBoostAction?.Dispose();
         fallbackJumpAction?.Dispose();
         StopCarAudio();
     }

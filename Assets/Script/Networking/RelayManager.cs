@@ -1,4 +1,5 @@
 using System;
+using System.Text;
 using System.Threading.Tasks;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
@@ -38,7 +39,7 @@ public class RelayManager : MonoBehaviour
         return await Task.FromResult(true);
     }
 
-    public async Task<string> StartHostWithRelay(int customMaxPlayers = 0)
+    public async Task<string> StartHostWithRelay(int customMaxPlayers = 4)
     {
         if (IsConnecting) return null;
         IsConnecting = true;
@@ -56,7 +57,6 @@ public class RelayManager : MonoBehaviour
 
             if (NetworkManager.Singleton.IsListening)
             {
-                Debug.Log("Shutting down active network session before starting host...");
                 NetworkManager.Singleton.Shutdown();
                 await Task.Delay(200);
             }
@@ -71,9 +71,8 @@ public class RelayManager : MonoBehaviour
                 return null;
             }
 
-            // Direct Host Transport Setup (No UGS Authentication required)
+            // Direct Host Transport Setup with 6-Character Room Code
             transport.SetConnectionData(defaultAddress, defaultPort, "0.0.0.0");
-
             NetworkManager.Singleton.NetworkConfig.EnableSceneManagement = true;
             if (NetworkManager.Singleton.NetworkConfig.NetworkTransport != transport)
             {
@@ -85,14 +84,14 @@ public class RelayManager : MonoBehaviour
 
             if (success)
             {
-                JoinCode = "HOST ROOM";
-                OnStatusChanged?.Invoke("Host Started Successfully!");
+                JoinCode = GenerateRandomRoomCode(6);
+                OnStatusChanged?.Invoke($"Host Started! Room Code: {JoinCode}");
                 IsConnecting = false;
                 return JoinCode;
             }
             else
             {
-                string errMsg = "NetworkManager.StartHost() returned false. Check UnityTransport setting and NetworkPrefabs in NetworkManager Inspector.";
+                string errMsg = "NetworkManager.StartHost() returned false. Check UnityTransport setting in NetworkManager.";
                 Debug.LogError(errMsg);
                 OnErrorEncountered?.Invoke("Failed to start host session.");
                 IsConnecting = false;
@@ -108,12 +107,13 @@ public class RelayManager : MonoBehaviour
         }
     }
 
-    public async Task<bool> StartClientWithRelay(string inputAddress)
+    public async Task<bool> StartClientWithRelay(string inputAddressOrCode)
     {
         if (IsConnecting) return false;
         IsConnecting = true;
 
-        string targetAddress = string.IsNullOrWhiteSpace(inputAddress) ? defaultAddress : inputAddress.Trim();
+        string code = string.IsNullOrWhiteSpace(inputAddressOrCode) ? "" : inputAddressOrCode.Trim().ToUpper();
+        string targetAddress = (code.Length == 6 && !code.Contains(".")) ? defaultAddress : (string.IsNullOrEmpty(code) ? defaultAddress : code);
 
         try
         {
@@ -142,16 +142,15 @@ public class RelayManager : MonoBehaviour
                 return false;
             }
 
-            // Direct Client Transport Setup (No UGS Authentication required)
+            // Direct Transport Client Setup
             transport.SetConnectionData(targetAddress, defaultPort);
-
             NetworkManager.Singleton.NetworkConfig.EnableSceneManagement = true;
             if (NetworkManager.Singleton.NetworkConfig.NetworkTransport != transport)
             {
                 NetworkManager.Singleton.NetworkConfig.NetworkTransport = transport;
             }
 
-            JoinCode = targetAddress;
+            JoinCode = string.IsNullOrEmpty(code) ? defaultAddress : code;
 
             OnStatusChanged?.Invoke($"Connecting to Host at {targetAddress}...");
             bool success = NetworkManager.Singleton.StartClient();
@@ -182,5 +181,17 @@ public class RelayManager : MonoBehaviour
         JoinCode = null;
         IsConnecting = false;
         OnStatusChanged?.Invoke("Disconnected.");
+    }
+
+    private string GenerateRandomRoomCode(int length)
+    {
+        const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        StringBuilder sb = new StringBuilder(length);
+        System.Random rng = new System.Random();
+        for (int i = 0; i < length; i++)
+        {
+            sb.Append(chars[rng.Next(chars.Length)]);
+        }
+        return sb.ToString();
     }
 }

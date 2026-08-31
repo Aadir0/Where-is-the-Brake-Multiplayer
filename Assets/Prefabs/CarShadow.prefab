@@ -78,9 +78,9 @@ SpriteRenderer:
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
   m_GlobalIlluminationMeshLod: 0
-  m_SortingLayerID: -593116185
-  m_SortingLayer: 3
-  m_SortingOrder: 0
+  m_SortingLayerID: 1664070943
+  m_SortingLayer: 2
+  m_SortingOrder: 1
   m_MaskInteraction: 0
   m_Sprite: {fileID: 8425828907037081512, guid: 20c6b251106373a4d99d1426f9e8d5b9, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 0.69803923}
@@ -104,7 +104,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6444d144ff571d74bbeb05ff8f0cfc29, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Shadow
-  shadowScale: 1.1
+  shadowScale: 1.15
   shadowDistance: 0.15
   sideOffset: 0.15
   positionSmoothness: 8

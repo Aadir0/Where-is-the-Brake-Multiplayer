@@ -9,10 +9,15 @@ TagManager:
   - Winning
   - Hole
   - Boundary
-  - Jump
   - SpawnPoint
   - Dead
   - Win
+  - Transition
+  - Jump
+  - Timer
+  - TimeOver
+  - TimeIsLess
+  - Flower
   layers:
   - Default
   - TransparentFX
@@ -58,9 +63,6 @@ TagManager:
     locked: 0
   - name: Player
     uniqueID: 3701851111
-    locked: 0
-  - name: 
-    uniqueID: 3752928553
     locked: 0
   m_RenderingLayers:
   - Default

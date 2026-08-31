@@ -14,15 +14,12 @@ public class PlayerSpawner : MonoBehaviour
     [SerializeField] private GameObject hostCarPrefab;
     [SerializeField] private GameObject clientCarPrefab;
 
-    [Header("Spawn Timing")]
-    [SerializeField] private float spawnDelayInGameplayScene = 3.0f;
-
     [Header("Spawn Settings")]
     [SerializeField] private Vector3 fallbackSpawnPosition = Vector3.zero;
 
     private readonly Dictionary<ulong, NetworkObject> spawnedPlayers = new Dictionary<ulong, NetworkObject>();
     private readonly List<ulong> pendingSpawnClients = new List<ulong>();
-    private bool isSpawningInProgress = false;
+    private SpawnPoint[] cachedSpawnPoints;
 
     private void Awake()
     {
@@ -43,8 +40,6 @@ public class PlayerSpawner : MonoBehaviour
 
     private void OnEnable()
     {
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnUnitySceneLoaded;
-
         if (NetworkManager.Singleton != null)
         {
             NetworkManager.Singleton.OnServerStarted += OnServerStarted;
@@ -56,12 +51,12 @@ public class PlayerSpawner : MonoBehaviour
                 NetworkManager.Singleton.SceneManager.OnSceneEvent += OnSceneEvent;
             }
         }
+
+        SceneManager.sceneLoaded += OnUnitySceneLoaded;
     }
 
     private void OnDisable()
     {
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnUnitySceneLoaded;
-
         if (NetworkManager.Singleton != null)
         {
             NetworkManager.Singleton.OnServerStarted -= OnServerStarted;
@@ -73,6 +68,8 @@ public class PlayerSpawner : MonoBehaviour
                 NetworkManager.Singleton.SceneManager.OnSceneEvent -= OnSceneEvent;
             }
         }
+
+        SceneManager.sceneLoaded -= OnUnitySceneLoaded;
     }
 
     private void OnServerStarted()
@@ -85,34 +82,21 @@ public class PlayerSpawner : MonoBehaviour
             NetworkManager.Singleton.SceneManager.OnSceneEvent += OnSceneEvent;
         }
 
-        string activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-        if (activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (IsGameplayScene(activeScene))
         {
-            HideAllCarsOffscreen();
+            SpawnAllPlayersInScene();
         }
-
-        NotifyPlayerCountToAllClients();
     }
 
     private void OnClientConnected(ulong clientId)
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
-        string activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-        if (activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
-        {
-            HideAllCarsOffscreen();
-        }
-        else if (!isSpawningInProgress)
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (IsGameplayScene(activeScene))
         {
             SpawnOrRepositionPlayerForClient(clientId, (int)clientId);
-        }
-        else
-        {
-            if (!pendingSpawnClients.Contains(clientId))
-            {
-                pendingSpawnClients.Add(clientId);
-            }
         }
 
         NotifyPlayerCountToAllClients();
@@ -130,44 +114,157 @@ public class PlayerSpawner : MonoBehaviour
     private void OnUnitySceneLoaded(Scene scene, LoadSceneMode mode)
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
-
-        if (scene.name.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
-        {
-            HideAllCarsOffscreen();
-        }
-        else
-        {
-            HideAllCarsOffscreen();
-            StartCoroutine(DelayedSpawnRoutine(scene.name, spawnDelayInGameplayScene));
-        }
+        HandleSceneLoaded(scene.name);
     }
 
     private void OnSceneEvent(SceneEvent sceneEvent)
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
-        if (sceneEvent.SceneEventType == SceneEventType.Load)
+        if (sceneEvent.SceneEventType == SceneEventType.LoadEventCompleted)
+        {
+            string loadedScene = string.IsNullOrEmpty(sceneEvent.SceneName) ? SceneManager.GetActiveScene().name : sceneEvent.SceneName;
+            HandleSceneLoaded(loadedScene);
+        }
+    }
+
+    private bool IsGameplayScene(string sceneName)
+    {
+        if (string.IsNullOrEmpty(sceneName)) return false;
+        return !sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase) &&
+               !sceneName.Equals("Ending", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void HandleSceneLoaded(string sceneName)
+    {
+        cachedSpawnPoints = null; // Reset spawn point cache for new scene
+
+        if (!IsGameplayScene(sceneName))
         {
             HideAllCarsOffscreen();
+            return;
         }
-        else if (sceneEvent.SceneEventType == SceneEventType.LoadEventCompleted)
-        {
-            string loadedScene = sceneEvent.SceneName;
-            if (string.IsNullOrEmpty(loadedScene))
-            {
-                loadedScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-            }
 
-            if (!loadedScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
-            {
-                StartCoroutine(DelayedSpawnRoutine(loadedScene, spawnDelayInGameplayScene));
-            }
+        SpawnAllPlayersInScene();
+    }
+
+    public void SpawnAllPlayersInScene()
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+
+        string activeSceneName = SceneManager.GetActiveScene().name;
+        if (!IsGameplayScene(activeSceneName))
+        {
+            HideAllCarsOffscreen();
+            return;
+        }
+
+        CacheSceneSpawnPoints();
+
+        var clientIds = NetworkManager.Singleton.ConnectedClientsIds;
+        for (int i = 0; i < clientIds.Count; i++)
+        {
+            SpawnOrRepositionPlayerForClient(clientIds[i], i);
+        }
+
+        NotifyPlayerCountToAllClients();
+
+        if (NetworkRaceManager.Instance != null)
+        {
+            NetworkRaceManager.Instance.StartCountdownServer();
+        }
+    }
+
+    private void CacheSceneSpawnPoints()
+    {
+        cachedSpawnPoints = UnityEngine.Object.FindObjectsByType<SpawnPoint>(FindObjectsSortMode.None);
+    }
+
+    private GameObject SelectCarPrefabForClient(ulong clientId, int playerIndex)
+    {
+        bool isHost = (clientId == NetworkManager.ServerClientId || playerIndex == 0);
+
+        if (isHost && hostCarPrefab != null) return hostCarPrefab;
+        if (!isHost && clientCarPrefab != null) return clientCarPrefab;
+
+        if (playerCarPrefab != null) return playerCarPrefab;
+        if (hostCarPrefab != null) return hostCarPrefab;
+        return clientCarPrefab;
+    }
+
+    private void SpawnOrRepositionPlayerForClient(ulong clientId, int playerIndex)
+    {
+        if (!NetworkManager.Singleton.IsServer) return;
+
+        Vector3 spawnPos = GetSpawnPosition(playerIndex, out Quaternion spawnRot);
+
+        // Reposition existing Netcode Player Object
+        if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client) &&
+            client.PlayerObject != null && client.PlayerObject.IsSpawned)
+        {
+            RepositionCar(client.PlayerObject, spawnPos, spawnRot);
+            spawnedPlayers[clientId] = client.PlayerObject;
+            return;
+        }
+
+        // Reposition tracked player object
+        if (spawnedPlayers.TryGetValue(clientId, out NetworkObject existing) && existing != null && existing.IsSpawned)
+        {
+            RepositionCar(existing, spawnPos, spawnRot);
+            return;
+        }
+
+        // Instantiate and spawn official player car object
+        GameObject targetPrefab = SelectCarPrefabForClient(clientId, playerIndex);
+        if (targetPrefab == null)
+        {
+            Debug.LogError("[PlayerSpawner ERROR] No Car Prefab assigned in PlayerSpawner Inspector!");
+            return;
+        }
+
+        GameObject playerObj = Instantiate(targetPrefab, spawnPos, spawnRot);
+        NetworkObject netObj = playerObj.GetComponent<NetworkObject>();
+
+        if (netObj != null)
+        {
+            netObj.SpawnAsPlayerObject(clientId, true);
+            spawnedPlayers[clientId] = netObj;
+            RepositionCar(netObj, spawnPos, spawnRot);
+            Debug.Log($"[PlayerSpawner SUCCESS] Spawned official Player Object for Client {clientId} at Position: {spawnPos}");
+        }
+    }
+
+    private void RepositionCar(NetworkObject netObj, Vector3 position, Quaternion rotation)
+    {
+        if (netObj == null) return;
+
+        Transform carTransform = netObj.transform;
+        NetworkCarController carCtrl = netObj.GetComponent<NetworkCarController>();
+        CarHealth carHealth = netObj.GetComponent<CarHealth>();
+        Collider2D col = netObj.GetComponent<Collider2D>();
+
+        if (col != null) col.enabled = true;
+
+        if (carCtrl != null)
+        {
+            carCtrl.TeleportCarRpc(position, rotation);
+            carCtrl.ResetCarBoostStateRpc();
+        }
+        else
+        {
+            carTransform.SetPositionAndRotation(position, rotation);
+        }
+
+        if (carHealth != null)
+        {
+            carHealth.ResetHealthAndStateServer();
+            carHealth.isInvulnerableDuringSpawn = false;
         }
     }
 
     private void HideAllCarsOffscreen()
     {
-        if (!NetworkManager.Singleton.IsServer) return;
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
         Vector3 offscreenPos = new Vector3(9999f, 9999f, 0f);
 
@@ -200,175 +297,20 @@ public class PlayerSpawner : MonoBehaviour
         }
     }
 
-    private IEnumerator DelayedSpawnRoutine(string sceneName, float delaySeconds)
-    {
-        if (isSpawningInProgress) yield break;
-        isSpawningInProgress = true;
-
-        yield return new WaitForSeconds(delaySeconds);
-
-        Scene scene = UnityEngine.SceneManagement.SceneManager.GetSceneByName(sceneName);
-        if (scene.IsValid() && scene.isLoaded)
-        {
-            UnityEngine.SceneManagement.SceneManager.SetActiveScene(scene);
-        }
-
-        SpawnAllPlayersInScene();
-
-        foreach (ulong clientId in pendingSpawnClients)
-        {
-            SpawnOrRepositionPlayerForClient(clientId, (int)clientId);
-        }
-        pendingSpawnClients.Clear();
-
-        isSpawningInProgress = false;
-
-        if (NetworkRaceManager.Instance != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
-        {
-            NetworkRaceManager.Instance.StartCountdownServer();
-        }
-    }
-
-    public void SpawnAllPlayersInScene()
-    {
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
-
-        string activeSceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
-        if (activeSceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
-        {
-            HideAllCarsOffscreen();
-            return;
-        }
-
-        var clientIds = NetworkManager.Singleton.ConnectedClientsIds;
-        for (int i = 0; i < clientIds.Count; i++)
-        {
-            ulong clientId = clientIds[i];
-            SpawnOrRepositionPlayerForClient(clientId, i);
-        }
-
-        NotifyPlayerCountToAllClients();
-    }
-
-    private GameObject SelectCarPrefabForClient(ulong clientId, int playerIndex)
-    {
-        bool isHost = (clientId == NetworkManager.ServerClientId || playerIndex == 0);
-
-        if (isHost && hostCarPrefab != null) return hostCarPrefab;
-        if (!isHost && clientCarPrefab != null) return clientCarPrefab;
-
-        if (playerCarPrefab != null) return playerCarPrefab;
-        if (hostCarPrefab != null) return hostCarPrefab;
-        return clientCarPrefab;
-    }
-
-    private void SpawnOrRepositionPlayerForClient(ulong clientId, int playerIndex)
-    {
-        if (!NetworkManager.Singleton.IsServer) return;
-
-        Vector3 spawnPos = GetSpawnPosition(playerIndex, out Quaternion spawnRot);
-
-        // 1. Reposition existing NGO Player Object for clientId via TeleportCarRpc
-        if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client) &&
-            client.PlayerObject != null && client.PlayerObject.IsSpawned)
-        {
-            Transform carTransform = client.PlayerObject.transform;
-
-            NetworkCarController carCtrl = carTransform.GetComponent<NetworkCarController>();
-            if (carCtrl != null)
-            {
-                carCtrl.TeleportCarRpc(spawnPos, spawnRot);
-                carCtrl.ResetCarBoostStateRpc();
-            }
-            else
-            {
-                carTransform.position = spawnPos;
-                carTransform.rotation = spawnRot;
-            }
-
-            CarHealth carHealth = carTransform.GetComponent<CarHealth>();
-            if (carHealth != null)
-            {
-                carHealth.ResetHealthAndStateServer();
-                carHealth.isInvulnerableDuringSpawn = false;
-            }
-
-            spawnedPlayers[clientId] = client.PlayerObject;
-            Debug.Log($"[PlayerSpawner SUCCESS] Teleported existing Player Object for Client {clientId} to SpawnPoint Position: {spawnPos}");
-            return;
-        }
-
-        // 2. Reposition tracked player object
-        if (spawnedPlayers.TryGetValue(clientId, out NetworkObject existing) && existing != null && existing.IsSpawned)
-        {
-            NetworkCarController carCtrl = existing.GetComponent<NetworkCarController>();
-            if (carCtrl != null)
-            {
-                carCtrl.TeleportCarRpc(spawnPos, spawnRot);
-                carCtrl.ResetCarBoostStateRpc();
-            }
-            else
-            {
-                existing.transform.position = spawnPos;
-                existing.transform.rotation = spawnRot;
-            }
-
-            CarHealth carHealth = existing.GetComponent<CarHealth>();
-            if (carHealth != null)
-            {
-                carHealth.ResetHealthAndStateServer();
-                carHealth.isInvulnerableDuringSpawn = false;
-            }
-
-            Debug.Log($"[PlayerSpawner SUCCESS] Teleported tracked Player Object for Client {clientId} to SpawnPoint Position: {spawnPos}");
-            return;
-        }
-
-        // 3. Select distinct Host/Client Prefab & Spawn As Official Player Object
-        GameObject targetPrefab = SelectCarPrefabForClient(clientId, playerIndex);
-        if (targetPrefab == null)
-        {
-            Debug.LogError("[PlayerSpawner ERROR] No Car Prefab assigned in PlayerSpawner Inspector!");
-            return;
-        }
-
-        GameObject playerObj = Instantiate(targetPrefab, spawnPos, spawnRot);
-        NetworkObject netObj = playerObj.GetComponent<NetworkObject>();
-
-        if (netObj != null)
-        {
-            netObj.SpawnAsPlayerObject(clientId, true);
-            spawnedPlayers[clientId] = netObj;
-
-            NetworkCarController carCtrl = playerObj.GetComponent<NetworkCarController>();
-            if (carCtrl != null)
-            {
-                carCtrl.TeleportCarRpc(spawnPos, spawnRot);
-                carCtrl.ResetCarBoostStateRpc();
-            }
-
-            Debug.Log($"[PlayerSpawner SUCCESS] Spawned official Player Object for Client {clientId} at Position: {spawnPos}");
-        }
-    }
-
     public Vector3 GetSpawnPosition(int playerIndex, out Quaternion rotation)
     {
         rotation = Quaternion.identity;
 
-        SpawnPoint[] spawnPoints = UnityEngine.Object.FindObjectsByType<SpawnPoint>(FindObjectsSortMode.None);
-        if (spawnPoints != null && spawnPoints.Length > 0)
+        if (cachedSpawnPoints == null || cachedSpawnPoints.Length == 0)
         {
-            int index = Mathf.Clamp(playerIndex, 0, spawnPoints.Length - 1);
-            rotation = spawnPoints[index].transform.rotation;
-            return spawnPoints[index].transform.position;
+            CacheSceneSpawnPoints();
         }
 
-        GameObject[] spawnObjects = GameObject.FindGameObjectsWithTag("SpawnPoint");
-        if (spawnObjects != null && spawnObjects.Length > 0)
+        if (cachedSpawnPoints != null && cachedSpawnPoints.Length > 0)
         {
-            int index = Mathf.Clamp(playerIndex, 0, spawnObjects.Length - 1);
-            rotation = spawnObjects[index].transform.rotation;
-            return spawnObjects[index].transform.position;
+            int index = Mathf.Clamp(playerIndex, 0, cachedSpawnPoints.Length - 1);
+            rotation = cachedSpawnPoints[index].transform.rotation;
+            return cachedSpawnPoints[index].transform.position;
         }
 
         return fallbackSpawnPosition + new Vector3(playerIndex * 2f, 0f, 0f);
@@ -385,6 +327,7 @@ public class PlayerSpawner : MonoBehaviour
 
     private void NotifyPlayerCountToAllClients()
     {
+        if (NetworkManager.Singleton == null) return;
         int count = NetworkManager.Singleton.ConnectedClientsIds.Count;
         if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsServer)
         {

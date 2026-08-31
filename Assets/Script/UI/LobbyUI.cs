@@ -1,10 +1,12 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using TMPro;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 public class LobbyUI : MonoBehaviour
@@ -23,15 +25,28 @@ public class LobbyUI : MonoBehaviour
     [SerializeField] private TextMeshProUGUI roomCodeText;
     [SerializeField] private TextMeshProUGUI playerCountText;
     [SerializeField] private TextMeshProUGUI statusText;
-    [SerializeField] private TMP_InputField joinCodeInput; // IP Address Input Field (e.g. 127.0.0.1)
+    [SerializeField] private TMP_InputField joinCodeInput; // Room Code / Join Code Input Field
     [SerializeField] private Button joinGameButton;
     [SerializeField] private Button startGameButton;
     [SerializeField] private Button leaveRoomButton;
+
+    [Header("Lobby Button Scale Animation & Input")]
+    [SerializeField] private bool enableScaleAnimation = true;
+    [SerializeField] private Vector3 selectedScale = new Vector3(1.18f, 1.18f, 1f);
+    [SerializeField] private Vector3 unselectedScale = new Vector3(0.85f, 0.85f, 1f);
+    [SerializeField] private float scaleSpeed = 12f;
+    [SerializeField] private float moveRepeatDelay = 0.22f;
+    [SerializeField] private float gamepadDeadzone = 0.4f;
 
     [Header("Animation Reference")]
     [SerializeField] private JustAButton menuButtonAnimator;
 
     private const string PLAYER_COUNT_MSG = "UpdatePlayerCountMsg";
+
+    private List<Button> activeLobbyButtons = new List<Button>();
+    private Dictionary<Transform, Vector3> originalScales = new Dictionary<Transform, Vector3>();
+    private int selectedLobbyIndex = 0;
+    private float nextMoveTime;
 
     private void Awake()
     {
@@ -53,6 +68,20 @@ public class LobbyUI : MonoBehaviour
             joinCodeInput.characterLimit = 15;
             joinCodeInput.characterValidation = TMP_InputField.CharacterValidation.None;
         }
+
+        CacheOriginalScales();
+    }
+
+    private void CacheOriginalScales()
+    {
+        Button[] allButtons = new Button[] { joinGameButton, startGameButton, leaveRoomButton, createRoomButton, joinRoomButton };
+        foreach (Button btn in allButtons)
+        {
+            if (btn != null && !originalScales.ContainsKey(btn.transform))
+            {
+                originalScales[btn.transform] = btn.transform.localScale;
+            }
+        }
     }
 
     private void OnEnable()
@@ -71,7 +100,7 @@ public class LobbyUI : MonoBehaviour
         if (RelayManager.Instance != null)
         {
             RelayManager.Instance.OnStatusChanged += UpdateStatusText;
-            RelayManager.Instance.OnErrorEncountered += UpdateStatusText;
+            RelayManager.Instance.OnErrorEncountered += HandleError;
         }
 
         if (NetworkManager.Singleton != null)
@@ -80,7 +109,7 @@ public class LobbyUI : MonoBehaviour
             NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
         }
 
-        ShowMainMenuPanel();
+        CacheOriginalScales();
     }
 
     private void OnDisable()
@@ -94,18 +123,115 @@ public class LobbyUI : MonoBehaviour
         if (RelayManager.Instance != null)
         {
             RelayManager.Instance.OnStatusChanged -= UpdateStatusText;
-            RelayManager.Instance.OnErrorEncountered -= UpdateStatusText;
+            RelayManager.Instance.OnErrorEncountered -= HandleError;
         }
 
         if (NetworkManager.Singleton != null)
         {
             NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
             NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnected;
+        }
 
-            if (NetworkManager.Singleton.CustomMessagingManager != null)
+        UnregisterMessagingHandlers();
+    }
+
+    private void Update()
+    {
+        if (lobbyPanel == null || !lobbyPanel.activeInHierarchy) return;
+
+        UpdateLobbyButtonSelectionInput();
+        UpdateLobbyButtonScaleAnimation();
+    }
+
+    private void UpdateLobbyButtonSelectionInput()
+    {
+        if (activeLobbyButtons.Count == 0) return;
+
+        if (Time.unscaledTime >= nextMoveTime)
+        {
+            float vertical = 0f;
+            float horizontal = 0f;
+
+            // 1. Keyboard WASD + Arrow Keys
+            if (Keyboard.current != null)
             {
-                NetworkManager.Singleton.CustomMessagingManager.UnregisterNamedMessageHandler(PLAYER_COUNT_MSG);
+                if (Keyboard.current.upArrowKey.isPressed || Keyboard.current.wKey.isPressed) vertical = 1f;
+                else if (Keyboard.current.downArrowKey.isPressed || Keyboard.current.sKey.isPressed) vertical = -1f;
+
+                if (Keyboard.current.leftArrowKey.isPressed || Keyboard.current.aKey.isPressed) horizontal = -1f;
+                else if (Keyboard.current.rightArrowKey.isPressed || Keyboard.current.dKey.isPressed) horizontal = 1f;
             }
+
+            // 2. Gamepad D-Pad ONLY for controller UI button selection (Left Stick disabled for UI selection)
+            Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+            if (gamepad != null)
+            {
+                float dpadY = gamepad.dpad.ReadValue().y;
+                float dpadX = gamepad.dpad.ReadValue().x;
+
+                if (Mathf.Abs(dpadY) >= gamepadDeadzone) vertical = dpadY;
+                if (Mathf.Abs(dpadX) >= gamepadDeadzone) horizontal = dpadX;
+            }
+
+            if (vertical > gamepadDeadzone || horizontal < -gamepadDeadzone)
+            {
+                MoveLobbySelection(-1);
+            }
+            else if (vertical < -gamepadDeadzone || horizontal > gamepadDeadzone)
+            {
+                MoveLobbySelection(1);
+            }
+        }
+
+        // 3. Selection Submit Input: Enter / Space / Gamepad buttonSouth
+        bool submitPressed = false;
+        if (Keyboard.current != null)
+        {
+            submitPressed = Keyboard.current.enterKey.wasPressedThisFrame ||
+                            Keyboard.current.numpadEnterKey.wasPressedThisFrame ||
+                            Keyboard.current.spaceKey.wasPressedThisFrame;
+        }
+
+        Gamepad activeGamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+        if (activeGamepad != null && activeGamepad.buttonSouth.wasPressedThisFrame)
+        {
+            submitPressed = true;
+        }
+
+        if (submitPressed && selectedLobbyIndex >= 0 && selectedLobbyIndex < activeLobbyButtons.Count)
+        {
+            Button btn = activeLobbyButtons[selectedLobbyIndex];
+            if (btn != null && btn.gameObject.activeInHierarchy && btn.interactable)
+            {
+                btn.onClick.Invoke();
+            }
+        }
+    }
+
+    private void MoveLobbySelection(int direction)
+    {
+        if (activeLobbyButtons.Count == 0) return;
+
+        selectedLobbyIndex += direction;
+        if (selectedLobbyIndex < 0) selectedLobbyIndex = activeLobbyButtons.Count - 1;
+        else if (selectedLobbyIndex >= activeLobbyButtons.Count) selectedLobbyIndex = 0;
+
+        nextMoveTime = Time.unscaledTime + moveRepeatDelay;
+    }
+
+    private void UpdateLobbyButtonScaleAnimation()
+    {
+        if (!enableScaleAnimation || activeLobbyButtons.Count == 0) return;
+
+        for (int i = 0; i < activeLobbyButtons.Count; i++)
+        {
+            Button btn = activeLobbyButtons[i];
+            if (btn == null || !btn.gameObject.activeInHierarchy) continue;
+
+            Vector3 baseScale = originalScales.ContainsKey(btn.transform) ? originalScales[btn.transform] : Vector3.one;
+            Vector3 targetScale = (i == selectedLobbyIndex) ? Vector3.Scale(baseScale, selectedScale) : Vector3.Scale(baseScale, unselectedScale);
+
+            btn.transform.localScale = Vector3.Lerp(btn.transform.localScale, targetScale, scaleSpeed * Time.unscaledDeltaTime);
         }
     }
 
@@ -114,28 +240,27 @@ public class LobbyUI : MonoBehaviour
         OnCreateRoomClicked();
     }
 
-    public void OpenJoinUI()
+    public void UpdatePlayerCountDisplay(int count)
     {
-        StartCoroutine(OpenJoinUIRoutine());
+        if (playerCountText != null)
+        {
+            playerCountText.text = $"PLAYERS: {count} / 2";
+        }
     }
 
-    private IEnumerator OpenJoinUIRoutine()
+    public void OpenJoinUI()
     {
-        if (menuButtonAnimator == null)
+        if (SceneTransitionManager.Instance != null)
         {
-            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                ExecuteOpenJoinUI();
+            });
         }
-
-        // Keep mainMenuPanel ACTIVE while playing press animation
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
-
-        if (menuButtonAnimator != null)
+        else
         {
-            menuButtonAnimator.PlayPressAnimation();
-            yield return menuButtonAnimator.WaitForPlayAnimation();
+            ExecuteOpenJoinUI();
         }
-
-        ExecuteOpenJoinUI();
     }
 
     private void ExecuteOpenJoinUI()
@@ -147,7 +272,7 @@ public class LobbyUI : MonoBehaviour
         {
             joinCodeInput.characterLimit = 15;
             joinCodeInput.gameObject.SetActive(true);
-            joinCodeInput.text = "127.0.0.1";
+            joinCodeInput.text = "";
         }
 
         if (joinGameButton != null)
@@ -161,8 +286,15 @@ public class LobbyUI : MonoBehaviour
         if (roomCodeText != null) roomCodeText.gameObject.SetActive(false);
         if (startGameButton != null) startGameButton.gameObject.SetActive(false);
         if (playerCountText != null) playerCountText.gameObject.SetActive(false);
+        if (leaveRoomButton != null) leaveRoomButton.gameObject.SetActive(true);
 
-        UpdateStatusText("Click Join Game to connect (default IP: 127.0.0.1).");
+        // Update active lobby button selection list
+        activeLobbyButtons.Clear();
+        if (joinGameButton != null && joinGameButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(joinGameButton);
+        if (leaveRoomButton != null && leaveRoomButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(leaveRoomButton);
+        selectedLobbyIndex = 0;
+
+        UpdateStatusText("Enter Room Code (or IP) and click Join Game.");
     }
 
     public void JoinRoom()
@@ -172,26 +304,17 @@ public class LobbyUI : MonoBehaviour
 
     private void OnCreateRoomClicked()
     {
-        StartCoroutine(CreateRoomRoutine());
-    }
-
-    private IEnumerator CreateRoomRoutine()
-    {
-        if (menuButtonAnimator == null)
+        if (SceneTransitionManager.Instance != null)
         {
-            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                ExecuteCreateRoom();
+            });
         }
-
-        // Keep mainMenuPanel ACTIVE while playing press animation
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
-
-        if (menuButtonAnimator != null)
+        else
         {
-            menuButtonAnimator.PlayPressAnimation();
-            yield return menuButtonAnimator.WaitForPlayAnimation();
+            ExecuteCreateRoom();
         }
-
-        ExecuteCreateRoom();
     }
 
     private async void ExecuteCreateRoom()
@@ -222,211 +345,241 @@ public class LobbyUI : MonoBehaviour
             return;
         }
 
-        string ip = joinCodeInput != null ? joinCodeInput.text : "127.0.0.1";
-        if (string.IsNullOrWhiteSpace(ip)) ip = "127.0.0.1";
-
+        string code = joinCodeInput != null ? joinCodeInput.text : "";
         SetInteractable(false);
-        UpdateStatusText($"Connecting to Host at {ip}...");
-        bool success = await RelayManager.Instance.StartClientWithRelay(ip);
-        SetInteractable(true);
+        UpdateStatusText("Connecting to room...");
 
-        if (success)
+        bool success = await RelayManager.Instance.StartClientWithRelay(code);
+
+        if (!success)
         {
-            ShowClientConnectedLobbyUI(ip);
-            RegisterMessagingHandlers();
-            UpdatePlayerCountDisplay(1);
-        }
-    }
-
-    private void RegisterMessagingHandlers()
-    {
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.CustomMessagingManager != null)
-        {
-            NetworkManager.Singleton.CustomMessagingManager.RegisterNamedMessageHandler(PLAYER_COUNT_MSG, (ulong senderClientId, FastBufferReader reader) =>
-            {
-                reader.ReadValueSafe(out int count);
-                UpdatePlayerCountDisplay(count);
-            });
-        }
-    }
-
-    private void BroadcastPlayerCountServer()
-    {
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
-
-        int count = NetworkManager.Singleton.ConnectedClientsIds.Count;
-        UpdatePlayerCountDisplay(count);
-
-        using FastBufferWriter writer = new FastBufferWriter(FastBufferWriter.GetWriteSize<int>(), Allocator.Temp);
-        writer.WriteValueSafe(count);
-
-        if (NetworkManager.Singleton.CustomMessagingManager != null)
-        {
-            NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll(PLAYER_COUNT_MSG, writer);
+            SetInteractable(true);
         }
     }
 
     private void OnStartGameClicked()
     {
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
+        if (SceneTransitionManager.Instance != null)
         {
-            StartCoroutine(StartMatchRoutine());
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
+                {
+                    NetworkManager.Singleton.SceneManager.LoadScene("Level 1", UnityEngine.SceneManagement.LoadSceneMode.Single);
+                }
+            });
         }
-    }
-
-    private IEnumerator StartMatchRoutine()
-    {
-        if (NetworkRaceManager.Instance != null)
-        {
-            NetworkRaceManager.Instance.StartCountdownServer();
-        }
-
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null)
+        else if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
         {
             NetworkManager.Singleton.SceneManager.LoadScene("Level 1", UnityEngine.SceneManagement.LoadSceneMode.Single);
         }
-        else
-        {
-            UnityEngine.SceneManagement.SceneManager.LoadScene("Level 1");
-        }
-
-        yield break;
     }
 
     private void OnLeaveRoomClicked()
     {
-        StartCoroutine(LeaveRoomRoutine());
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                ExecuteLeaveRoom();
+            });
+        }
+        else
+        {
+            ExecuteLeaveRoom();
+        }
     }
 
-    private IEnumerator LeaveRoomRoutine()
+    private void ExecuteLeaveRoom()
     {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
+        if (lobbyPanel != null) lobbyPanel.SetActive(false);
+
         if (RelayManager.Instance != null)
         {
             RelayManager.Instance.ShutdownSession();
         }
 
+        UnregisterMessagingHandlers();
+        ShowMainMenuUI();
+
         if (menuButtonAnimator == null)
         {
             menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
         }
 
-        // STEP 1: Enable mainMenuPanel FIRST so animators are active in hierarchy!
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
-        if (lobbyPanel != null) lobbyPanel.SetActive(false);
-
-        // STEP 2 & 3: Play Stop animation on ACTIVE animators and wait!
         if (menuButtonAnimator != null)
         {
-            menuButtonAnimator.PlayStopAnimation();
-            yield return menuButtonAnimator.WaitForStopAnimation();
-            menuButtonAnimator.ResetMenuAnimation();
+            menuButtonAnimator.SelectButton(0);
+        }
+    }
+
+    private void ShowMainMenuUI()
+    {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
+        if (lobbyPanel != null) lobbyPanel.SetActive(false);
+        activeLobbyButtons.Clear();
+        SetInteractable(true);
+        UpdateStatusText("Ready.");
+    }
+
+    private void ShowHostLobbyUI(string roomCode)
+    {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
+        if (lobbyPanel != null) lobbyPanel.SetActive(true);
+
+        if (roomCodeText != null)
+        {
+            roomCodeText.gameObject.SetActive(true);
+            roomCodeText.text = $"ROOM CODE: {roomCode}";
         }
 
-        ShowMainMenuPanel();
+        if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);
+        if (joinGameButton != null) joinGameButton.gameObject.SetActive(false);
+
+        if (playerCountText != null)
+        {
+            playerCountText.gameObject.SetActive(true);
+            playerCountText.text = "PLAYERS: 1 / 2";
+        }
+
+        if (startGameButton != null)
+        {
+            startGameButton.gameObject.SetActive(true);
+            startGameButton.interactable = true;
+        }
+
+        if (leaveRoomButton != null)
+        {
+            leaveRoomButton.gameObject.SetActive(true);
+        }
+
+        // Active lobby buttons for Host: [Start Game, Leave Room]
+        activeLobbyButtons.Clear();
+        if (startGameButton != null && startGameButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(startGameButton);
+        if (leaveRoomButton != null && leaveRoomButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(leaveRoomButton);
+        selectedLobbyIndex = 0;
+
+        UpdateStatusText($"Room created! Share Room Code: {roomCode}");
+    }
+
+    private void ShowClientLobbyUI(string roomCode)
+    {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
+        if (lobbyPanel != null) lobbyPanel.SetActive(true);
+
+        if (roomCodeText != null)
+        {
+            roomCodeText.gameObject.SetActive(true);
+            roomCodeText.text = $"CONNECTED ROOM: {roomCode}";
+        }
+
+        if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);
+        if (joinGameButton != null) joinGameButton.gameObject.SetActive(false);
+
+        if (playerCountText != null)
+        {
+            playerCountText.gameObject.SetActive(true);
+            playerCountText.text = "PLAYERS: 2 / 2";
+        }
+
+        if (startGameButton != null)
+        {
+            startGameButton.gameObject.SetActive(false);
+        }
+
+        if (leaveRoomButton != null)
+        {
+            leaveRoomButton.gameObject.SetActive(true);
+        }
+
+        // Active lobby buttons for Client: [Leave Room]
+        activeLobbyButtons.Clear();
+        if (leaveRoomButton != null && leaveRoomButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(leaveRoomButton);
+        selectedLobbyIndex = 0;
+
+        UpdateStatusText("Waiting for Host to start game...");
     }
 
     private void OnClientConnected(ulong clientId)
     {
-        Debug.Log($"[LobbyUI] Client Connected callback: {clientId}");
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+        if (NetworkManager.Singleton.IsHost)
         {
             BroadcastPlayerCountServer();
+        }
+        else if (clientId == NetworkManager.Singleton.LocalClientId)
+        {
+            ShowClientLobbyUI(RelayManager.Instance != null ? RelayManager.Instance.JoinCode : "CONNECTED");
+            RegisterMessagingHandlers();
         }
     }
 
     private void OnClientDisconnected(ulong clientId)
     {
-        Debug.Log($"[LobbyUI] Client Disconnected callback: {clientId}");
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+        if (NetworkManager.Singleton.IsHost)
         {
             BroadcastPlayerCountServer();
         }
-
-        if (NetworkManager.Singleton != null && !NetworkManager.Singleton.IsServer && !NetworkManager.Singleton.IsConnectedClient)
+        else if (clientId == NetworkManager.Singleton.LocalClientId)
         {
-            StartCoroutine(LeaveRoomRoutine());
-            UpdateStatusText("Disconnected from Host.");
+            UpdateStatusText("Disconnected from host.");
+            ShowMainMenuUI();
         }
     }
 
-    public void UpdatePlayerCountDisplay(int count)
+    private void RegisterMessagingHandlers()
     {
-        if (playerCountText == null) return;
-        playerCountText.text = $"Players: {count} / 4";
-        playerCountText.gameObject.SetActive(true);
+        if (NetworkManager.Singleton == null) return;
+        var customMessaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (customMessaging != null)
+        {
+            customMessaging.RegisterNamedMessageHandler(PLAYER_COUNT_MSG, OnPlayerCountMessageReceived);
+        }
     }
 
-    private void ShowMainMenuPanel()
+    private void UnregisterMessagingHandlers()
     {
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
-        if (lobbyPanel != null) lobbyPanel.SetActive(false);
-
-        if (menuButtonAnimator == null)
+        if (NetworkManager.Singleton == null) return;
+        var customMessaging = NetworkManager.Singleton.CustomMessagingManager;
+        if (customMessaging != null)
         {
-            menuButtonAnimator = UnityEngine.Object.FindFirstObjectByType<JustAButton>();
+            customMessaging.UnregisterNamedMessageHandler(PLAYER_COUNT_MSG);
         }
-
-        if (menuButtonAnimator != null)
-        {
-            menuButtonAnimator.ResetMenuAnimation();
-        }
-
-        if (createRoomButton != null)
-        {
-            createRoomButton.gameObject.SetActive(true);
-            createRoomButton.interactable = true;
-        }
-
-        if (joinRoomButton != null)
-        {
-            joinRoomButton.gameObject.SetActive(true);
-            joinRoomButton.interactable = true;
-        }
-
-        if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);
-        if (roomCodeText != null) roomCodeText.gameObject.SetActive(false);
-        if (startGameButton != null) startGameButton.gameObject.SetActive(false);
-        if (joinGameButton != null) joinGameButton.gameObject.SetActive(false);
     }
 
-    private void ShowHostLobbyUI(string info)
+    private void BroadcastPlayerCountServer()
     {
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
-        if (lobbyPanel != null) lobbyPanel.SetActive(true);
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsHost) return;
 
-        if (roomCodeText != null)
+        int count = NetworkManager.Singleton.ConnectedClientsList.Count;
+        UpdatePlayerCountDisplay(count);
+
+        FastBufferWriter writer = new FastBufferWriter(FastBufferWriter.GetWriteSize<int>(), Allocator.Temp);
+        using (writer)
         {
-            roomCodeText.gameObject.SetActive(true);
-            roomCodeText.text = $"ROOM: {info}";
+            writer.WriteValueSafe(count);
+            NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll(PLAYER_COUNT_MSG, writer);
         }
-
-        if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);
-        if (joinGameButton != null) joinGameButton.gameObject.SetActive(false);
-        if (startGameButton != null) startGameButton.gameObject.SetActive(true);
     }
 
-    private void ShowClientConnectedLobbyUI(string ip)
+    private void OnPlayerCountMessageReceived(ulong senderClientId, FastBufferReader reader)
     {
-        if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
-        if (lobbyPanel != null) lobbyPanel.SetActive(true);
+        reader.ReadValueSafe(out int count);
+        UpdatePlayerCountDisplay(count);
+    }
 
-        if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);
-
-        if (joinGameButton != null)
+    private void UpdateStatusText(string msg)
+    {
+        if (statusText != null)
         {
-            joinGameButton.gameObject.SetActive(true);
-            joinGameButton.interactable = false;
-            TextMeshProUGUI btnText = joinGameButton.GetComponentInChildren<TextMeshProUGUI>();
-            if (btnText != null) btnText.text = "WAITING FOR HOST...";
+            statusText.text = msg;
         }
+    }
 
-        if (roomCodeText != null)
-        {
-            roomCodeText.gameObject.SetActive(true);
-            roomCodeText.text = $"CONNECTED TO: {ip}";
-        }
-
-        if (startGameButton != null) startGameButton.gameObject.SetActive(false);
+    private void HandleError(string errorMsg)
+    {
+        UpdateStatusText($"Error: {errorMsg}");
+        SetInteractable(true);
     }
 
     private void SetInteractable(bool state)
@@ -434,15 +587,5 @@ public class LobbyUI : MonoBehaviour
         if (createRoomButton != null) createRoomButton.interactable = state;
         if (joinRoomButton != null) joinRoomButton.interactable = state;
         if (joinGameButton != null) joinGameButton.interactable = state;
-        if (joinCodeInput != null) joinCodeInput.interactable = state;
-    }
-
-    private void UpdateStatusText(string message)
-    {
-        if (statusText != null)
-        {
-            statusText.text = message;
-        }
-        Debug.Log($"[LobbyUI Status] {message}");
     }
 }

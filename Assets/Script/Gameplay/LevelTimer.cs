@@ -5,14 +5,15 @@ using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class LevelTimer : NetworkBehaviour
 {
     public static LevelTimer Instance { get; private set; }
 
-    [Header("Timer Config")]
-    [SerializeField] private float levelDurationSeconds = 300f; // 5 minutes
+    [Header("Run Timer Config")]
+    [SerializeField] private float overallRunDurationSeconds = 300f; // 5 minutes total for all levels combined
 
     [Header("UI References (Optional Inspector Assignment)")]
     [SerializeField] private TextMeshProUGUI timerText;
@@ -32,10 +33,29 @@ public class LevelTimer : NetworkBehaviour
     );
 
     private bool timerRunning = false;
+    private float localRunStartTime = 0f;
+    private float offlineTimeRemaining = 300f;
+    private bool offlineIsTimeOver = false;
+    private bool hasInitializedRun = false;
+
+    private bool IsNetworkActive => NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && IsSpawned;
+    private bool IsServerOrOffline => !IsNetworkActive || (IsNetworkActive && IsServer);
+    public bool IsTimeOver => IsNetworkActive ? isTimeOver.Value : offlineIsTimeOver;
 
     private void Awake()
     {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
         Instance = this;
+        DontDestroyOnLoad(gameObject);
+
+        localRunStartTime = Time.time;
+        offlineTimeRemaining = overallRunDurationSeconds;
+        offlineIsTimeOver = false;
     }
 
     public override void OnDestroy()
@@ -49,24 +69,39 @@ public class LevelTimer : NetworkBehaviour
 
     private void OnEnable()
     {
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
+        SceneManager.sceneLoaded += OnSceneLoaded;
     }
 
     private void OnDisable()
     {
-        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
+        SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
-    private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+    private void Start()
     {
         FindOrSetupUIReferences();
+        CheckSceneTimerState(SceneManager.GetActiveScene().name);
+    }
 
-        if (IsServer && !scene.name.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+    public void ResetRunTimer()
+    {
+        localRunStartTime = Time.time;
+        offlineTimeRemaining = overallRunDurationSeconds;
+        offlineIsTimeOver = false;
+        hasInitializedRun = true;
+        timerRunning = true;
+
+        if (IsNetworkActive && IsServer)
         {
-            timerRunning = false;
-            timeRemaining.Value = levelDurationSeconds;
+            timeRemaining.Value = overallRunDurationSeconds;
             isTimeOver.Value = false;
         }
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        FindOrSetupUIReferences();
+        CheckSceneTimerState(scene.name);
     }
 
     public override void OnNetworkSpawn()
@@ -74,15 +109,14 @@ public class LevelTimer : NetworkBehaviour
         timeRemaining.OnValueChanged += OnTimeRemainingChanged;
         isTimeOver.OnValueChanged += OnTimeOverChanged;
 
-        if (IsServer)
+        FindOrSetupUIReferences();
+
+        if (IsServer && !hasInitializedRun)
         {
-            timerRunning = false;
-            timeRemaining.Value = levelDurationSeconds;
-            isTimeOver.Value = false;
+            ResetRunTimer();
         }
 
-        FindOrSetupUIReferences();
-        UpdateTimerDisplay(timeRemaining.Value);
+        UpdateTimerDisplay(GetRemainingTime());
     }
 
     public override void OnNetworkDespawn()
@@ -91,39 +125,110 @@ public class LevelTimer : NetworkBehaviour
         isTimeOver.OnValueChanged -= OnTimeOverChanged;
     }
 
+    private void CheckSceneTimerState(string sceneName)
+    {
+        if (string.IsNullOrEmpty(sceneName)) sceneName = SceneManager.GetActiveScene().name;
+
+        if (sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            timerRunning = false;
+            hasInitializedRun = false;
+            offlineTimeRemaining = overallRunDurationSeconds;
+            offlineIsTimeOver = false;
+        }
+        else if (sceneName.Equals("Ending", StringComparison.OrdinalIgnoreCase))
+        {
+            timerRunning = false;
+            hasInitializedRun = false;
+        }
+        else if (sceneName.Equals("Level 1", StringComparison.OrdinalIgnoreCase))
+        {
+            ResetRunTimer();
+            if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.ResetRun();
+            }
+        }
+        else
+        {
+            timerRunning = true;
+        }
+    }
+
+    public float GetRemainingTime()
+    {
+        if (IsNetworkActive)
+        {
+            return timeRemaining.Value;
+        }
+        return offlineTimeRemaining;
+    }
+
     public float GetElapsedTime()
     {
-        return Mathf.Max(0f, levelDurationSeconds - timeRemaining.Value);
+        float remaining = GetRemainingTime();
+        float elapsed = overallRunDurationSeconds - remaining;
+        if (elapsed <= 0.05f)
+        {
+            elapsed = Time.time - localRunStartTime;
+        }
+        return Mathf.Max(0.1f, elapsed);
     }
 
     public void StartTimerServer()
     {
-        if (!IsServer) return;
-        Debug.Log("[LevelTimer] Race started! 5-minute timer is NOW RUNNING!");
         timerRunning = true;
+        if (!hasInitializedRun)
+        {
+            ResetRunTimer();
+        }
     }
 
     public void StopTimerServer()
     {
-        if (!IsServer) return;
         timerRunning = false;
     }
 
     private void Update()
     {
-        if (IsServer && timerRunning && !isTimeOver.Value)
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) || activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
-            timeRemaining.Value = Mathf.Max(0f, timeRemaining.Value - Time.deltaTime);
+            return;
+        }
 
-            if (timeRemaining.Value <= 0f)
+        if (IsServerOrOffline && timerRunning && !IsTimeOver)
+        {
+            if (IsNetworkActive && IsServer)
             {
-                timerRunning = false;
-                isTimeOver.Value = true;
+                timeRemaining.Value = Mathf.Max(0f, timeRemaining.Value - Time.deltaTime);
+                if (timeRemaining.Value <= 0f)
+                {
+                    timerRunning = false;
+                    isTimeOver.Value = true;
+                    HandleTimerExpiration();
+                }
+            }
+            else if (!IsNetworkActive)
+            {
+                offlineTimeRemaining = Mathf.Max(0f, offlineTimeRemaining - Time.deltaTime);
+                if (offlineTimeRemaining <= 0f)
+                {
+                    timerRunning = false;
+                    offlineIsTimeOver = true;
+                    HandleTimerExpiration();
+                }
             }
         }
 
-        // Listen for Gamepad buttonSouth / Spacebar / Enter to click MainMenu button when TimeOver UI is displayed
-        if (isTimeOver.Value)
+        if (timerText == null)
+        {
+            FindOrSetupUIReferences();
+        }
+
+        UpdateTimerDisplay(GetRemainingTime());
+
+        if (IsTimeOver)
         {
             bool confirmPressed = false;
             if (Keyboard.current != null && (Keyboard.current.spaceKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame))
@@ -143,6 +248,47 @@ public class LevelTimer : NetworkBehaviour
         }
     }
 
+    private void HandleTimerExpiration()
+    {
+        ShowTimeOverUI();
+
+        if (LeaderboardManager.Instance != null)
+        {
+            string currentScene = SceneManager.GetActiveScene().name;
+            if (!currentScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) && !currentScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+            {
+                LeaderboardManager.Instance.RecordLevelCompletion(currentScene, overallRunDurationSeconds, 0);
+            }
+        }
+
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (!activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) && !activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            StartCoroutine(DelayedLoadEndingRoutine());
+        }
+    }
+
+    private IEnumerator DelayedLoadEndingRoutine()
+    {
+        yield return new WaitForSeconds(3.0f);
+
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && IsServer)
+        {
+            if (NetworkManager.Singleton.SceneManager != null)
+            {
+                NetworkManager.Singleton.SceneManager.LoadScene("Ending", LoadSceneMode.Single);
+            }
+            else
+            {
+                SceneManager.LoadScene("Ending");
+            }
+        }
+        else if (!IsNetworkActive)
+        {
+            SceneManager.LoadScene("Ending");
+        }
+    }
+
     private void OnTimeRemainingChanged(float oldVal, float newVal)
     {
         UpdateTimerDisplay(newVal);
@@ -152,7 +298,7 @@ public class LevelTimer : NetworkBehaviour
     {
         if (newVal)
         {
-            ShowTimeOverUI();
+            HandleTimerExpiration();
         }
     }
 
@@ -181,37 +327,66 @@ public class LevelTimer : NetworkBehaviour
 
     public void FindOrSetupUIReferences()
     {
-        if (timerText == null)
+        string sceneName = SceneManager.GetActiveScene().name;
+        if (sceneName.Equals("Ending", StringComparison.OrdinalIgnoreCase) || sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
+            timerText = null;
+            timeOverPanel = null;
+            mainMenuButton = null;
+            return;
+        }
+
+        if (timerText == null || !timerText.gameObject.scene.isLoaded)
+        {
+            timerText = null;
+
             GameObject timerObj = GameObject.FindGameObjectWithTag("Timer");
             if (timerObj != null)
             {
                 timerText = timerObj.GetComponent<TextMeshProUGUI>();
             }
-            else
+
+            if (timerText == null)
             {
                 TextMeshProUGUI[] foundTexts = UnityEngine.Object.FindObjectsByType<TextMeshProUGUI>(FindObjectsInactive.Include, FindObjectsSortMode.None);
                 foreach (var txt in foundTexts)
                 {
-                    if (txt.gameObject.name.Contains("Timer", StringComparison.OrdinalIgnoreCase))
+                    if (txt.gameObject.scene.isLoaded)
                     {
-                        timerText = txt;
-                        break;
+                        string txtName = txt.gameObject.name.ToLower();
+                        if (txtName.Contains("timer") || txtName.Contains("time") || txt.CompareTag("Timer"))
+                        {
+                            timerText = txt;
+                            break;
+                        }
+                    }
+                }
+
+                if (timerText == null)
+                {
+                    foreach (var txt in foundTexts)
+                    {
+                        if (txt.gameObject.scene.isLoaded &&
+                            txt.GetComponentInParent<Canvas>() != null &&
+                            txt.GetComponentInParent<Button>() == null &&
+                            !txt.gameObject.name.ToLower().Contains("prompt") &&
+                            !txt.gameObject.name.ToLower().Contains("start"))
+                        {
+                            timerText = txt;
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        if (timeOverPanel == null)
+        if (timeOverPanel == null || !timeOverPanel.scene.isLoaded)
         {
+            timeOverPanel = null;
+
             foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
             {
-                if (go.CompareTag("TimeOver") && go.scene.isLoaded)
-                {
-                    timeOverPanel = go;
-                    break;
-                }
-                else if (go.name.Equals("TimeOverPanel", StringComparison.OrdinalIgnoreCase) && go.scene.isLoaded)
+                if (go.scene.isLoaded && (go.CompareTag("TimeOver") || go.name.Equals("TimeOverPanel", StringComparison.OrdinalIgnoreCase) || go.name.Contains("TimeOver", StringComparison.OrdinalIgnoreCase)))
                 {
                     timeOverPanel = go;
                     break;
@@ -221,7 +396,8 @@ public class LevelTimer : NetworkBehaviour
 
         if (timeOverPanel != null)
         {
-            timeOverPanel.SetActive(false);
+            timeOverPanel.SetActive(IsTimeOver);
+
             if (mainMenuButton == null)
             {
                 mainMenuButton = timeOverPanel.GetComponentInChildren<Button>(true);
@@ -238,6 +414,16 @@ public class LevelTimer : NetworkBehaviour
     private void ShowTimeOverUI()
     {
         FindOrSetupUIReferences();
+
+        FinishLine finishLine = UnityEngine.Object.FindFirstObjectByType<FinishLine>();
+        if (finishLine != null)
+        {
+            GameObject winUI = finishLine.GetWinPanelInScene();
+            if (winUI != null) winUI.SetActive(false);
+
+            GameObject tilUI = finishLine.GetTimeIsLessPanelInScene();
+            if (tilUI != null) tilUI.SetActive(false);
+        }
 
         if (timeOverPanel != null)
         {
@@ -258,6 +444,8 @@ public class LevelTimer : NetworkBehaviour
 
     private void OnMainMenuButtonClicked()
     {
+        Time.timeScale = 1f;
+
         if (RelayManager.Instance != null)
         {
             RelayManager.Instance.ShutdownSession();
@@ -268,6 +456,6 @@ public class LevelTimer : NetworkBehaviour
             NetworkManager.Singleton.Shutdown();
         }
 
-        UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+        SceneManager.LoadScene("MainMenu");
     }
 }

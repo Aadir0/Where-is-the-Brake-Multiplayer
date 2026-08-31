@@ -4,12 +4,15 @@ using UnityEngine.SceneManagement;
 
 public class DeathMarkerManager : MonoBehaviour
 {
-    public static DeathMarkerManager Instance;
+    public static DeathMarkerManager Instance { get; private set; }
 
+    [Header("Death Marker Settings")]
     [SerializeField] private GameObject deathMarkerPrefab;
+    [SerializeField] private Vector3 spawnOffset = Vector3.zero;
+    [SerializeField] private int maxMarkersPerPlayer = 5;
 
-    private readonly List<GameObject> deathMarkers =
-        new List<GameObject>();
+    // Per-player active death marker tracking (keyed by Network Client ID)
+    private readonly Dictionary<ulong, Queue<GameObject>> playerMarkers = new Dictionary<ulong, Queue<GameObject>>();
 
     private int currentSceneBuildIndex;
 
@@ -17,16 +20,14 @@ public class DeathMarkerManager : MonoBehaviour
     {
         if (Instance != null && Instance != this)
         {
-            Destroy(this);
+            Destroy(gameObject);
             return;
         }
 
         Instance = this;
-
         DontDestroyOnLoad(gameObject);
 
-        currentSceneBuildIndex =
-            SceneManager.GetActiveScene().buildIndex;
+        currentSceneBuildIndex = SceneManager.GetActiveScene().buildIndex;
     }
 
     private void OnEnable()
@@ -39,9 +40,7 @@ public class DeathMarkerManager : MonoBehaviour
         SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
-    private void OnSceneLoaded(
-        Scene scene,
-        LoadSceneMode mode)
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
         if (scene.buildIndex == currentSceneBuildIndex)
         {
@@ -49,55 +48,70 @@ public class DeathMarkerManager : MonoBehaviour
         }
 
         ClearDeathMarkers();
-
-        currentSceneBuildIndex =
-            scene.buildIndex;
+        currentSceneBuildIndex = scene.buildIndex;
     }
 
-    public void SpawnDeathMarker(Vector3 position)
+    public void SpawnDeathMarker(Vector3 position, ulong playerId = 0)
     {
         if (deathMarkerPrefab == null)
         {
             return;
         }
 
+        Vector3 finalPosition = position + spawnOffset;
+
+        if (!playerMarkers.ContainsKey(playerId))
+        {
+            playerMarkers[playerId] = new Queue<GameObject>();
+        }
+
+        // Limit maximum active markers per player to 5. Destroy oldest mark when exceeding threshold.
+        while (playerMarkers[playerId].Count >= maxMarkersPerPlayer)
+        {
+            GameObject oldestMarker = playerMarkers[playerId].Dequeue();
+            if (oldestMarker != null)
+            {
+                Destroy(oldestMarker);
+            }
+        }
+
         GameObject marker = Instantiate(
             deathMarkerPrefab,
-            position,
+            finalPosition,
             Quaternion.identity
         );
 
         DontDestroyOnLoad(marker);
 
-        Collider2D[] colliders =
-            marker.GetComponentsInChildren<Collider2D>(true);
-
-        foreach (Collider2D collider in colliders)
+        // Disable colliders on spawned death marker
+        Collider2D[] colliders2D = marker.GetComponentsInChildren<Collider2D>(true);
+        foreach (Collider2D collider in colliders2D)
         {
             collider.enabled = false;
         }
 
-        Collider[] colliders3D =
-            marker.GetComponentsInChildren<Collider>(true);
-
+        Collider[] colliders3D = marker.GetComponentsInChildren<Collider>(true);
         foreach (Collider collider in colliders3D)
         {
             collider.enabled = false;
         }
 
-        deathMarkers.Add(marker);
+        playerMarkers[playerId].Enqueue(marker);
     }
 
-    private void ClearDeathMarkers()
+    public void ClearDeathMarkers()
     {
-        foreach (GameObject marker in deathMarkers)
+        foreach (var pair in playerMarkers)
         {
-            if (marker != null)
+            foreach (GameObject marker in pair.Value)
             {
-                Destroy(marker);
+                if (marker != null)
+                {
+                    Destroy(marker);
+                }
             }
         }
 
-        deathMarkers.Clear();
+        playerMarkers.Clear();
     }
 }
