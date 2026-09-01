@@ -319,6 +319,10 @@ public class LobbyUI : MonoBehaviour
 
     private async void ExecuteCreateRoom()
     {
+        if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
+        if (lobbyPanel != null) lobbyPanel.SetActive(true);
+        UpdateStatusText("Creating Room...");
+
         if (RelayManager.Instance == null)
         {
             UpdateStatusText("RelayManager instance not found!");
@@ -337,7 +341,22 @@ public class LobbyUI : MonoBehaviour
         }
     }
 
-    private async void OnJoinGameButtonClicked()
+    private void OnJoinGameButtonClicked()
+    {
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                ExecuteJoinGame();
+            });
+        }
+        else
+        {
+            ExecuteJoinGame();
+        }
+    }
+
+    private async void ExecuteJoinGame()
     {
         if (RelayManager.Instance == null)
         {

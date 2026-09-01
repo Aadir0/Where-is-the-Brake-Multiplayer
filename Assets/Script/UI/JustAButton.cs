@@ -30,18 +30,47 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private float gamepadDeadzone = 0.5f;
     [SerializeField] private InputSystemUIInputModule uiInputModule;
 
-    [Header("Options Menu")]
+    [Header("Options Menu & Volume Slider")]
     [SerializeField] private GameObject OptionMenu;
     [SerializeField] private Button optionBackButton;
+    [SerializeField] private Slider musicVolumeSlider;
 
     private int selectedIndex = 0;
     private float nextMoveTime;
     private bool isBusy;
     private bool isOptionMenuOpen;
 
+    private readonly Dictionary<Transform, Vector3> initialButtonScales = new Dictionary<Transform, Vector3>();
+    private readonly Dictionary<Transform, Coroutine> activePunchCoroutines = new Dictionary<Transform, Coroutine>();
+
     private void Awake()
     {
         DisableUIControllerSubmit();
+        CacheInitialButtonScales();
+    }
+
+    private void CacheInitialButtonScales()
+    {
+        initialButtonScales.Clear();
+        foreach (Button b in buttons)
+        {
+            if (b != null && !initialButtonScales.ContainsKey(b.transform))
+            {
+                initialButtonScales[b.transform] = b.transform.localScale;
+            }
+        }
+
+        if (hostGameButton != null && !initialButtonScales.ContainsKey(hostGameButton.transform))
+            initialButtonScales[hostGameButton.transform] = hostGameButton.transform.localScale;
+
+        if (joinGameButton != null && !initialButtonScales.ContainsKey(joinGameButton.transform))
+            initialButtonScales[joinGameButton.transform] = joinGameButton.transform.localScale;
+
+        if (optionsButton != null && !initialButtonScales.ContainsKey(optionsButton.transform))
+            initialButtonScales[optionsButton.transform] = optionsButton.transform.localScale;
+
+        if (optionBackButton != null && !initialButtonScales.ContainsKey(optionBackButton.transform))
+            initialButtonScales[optionBackButton.transform] = optionBackButton.transform.localScale;
     }
 
     private void OnEnable()
@@ -58,6 +87,34 @@ public class JustAButton : MonoBehaviour
 
         selectedIndex = Mathf.Clamp(firstSelectedIndex, 0, Mathf.Max(0, buttons.Count - 1));
         SelectButton(selectedIndex);
+
+        SetupVolumeSlider();
+    }
+
+    private void SetupVolumeSlider()
+    {
+        if (musicVolumeSlider == null && OptionMenu != null)
+        {
+            musicVolumeSlider = OptionMenu.GetComponentInChildren<Slider>(true);
+        }
+
+        if (musicVolumeSlider != null)
+        {
+            musicVolumeSlider.onValueChanged.RemoveAllListeners();
+            if (AudioManager.Instance != null)
+            {
+                musicVolumeSlider.value = AudioManager.Instance.GetMusicVolume();
+            }
+            musicVolumeSlider.onValueChanged.AddListener(OnMusicVolumeChanged);
+        }
+    }
+
+    private void OnMusicVolumeChanged(float val)
+    {
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.SetMusicVolume(val);
+        }
     }
 
     private void Start()
@@ -91,7 +148,14 @@ public class JustAButton : MonoBehaviour
     public void HostGame()
     {
         if (hostGameButton != null) AnimateButtonPress(hostGameButton);
-        if (LobbyUI.Instance != null)
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                if (LobbyUI.Instance != null) LobbyUI.Instance.CreateRoom();
+            });
+        }
+        else if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.CreateRoom();
         }
@@ -100,7 +164,14 @@ public class JustAButton : MonoBehaviour
     public void JoinGame()
     {
         if (joinGameButton != null) AnimateButtonPress(joinGameButton);
-        if (LobbyUI.Instance != null)
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                if (LobbyUI.Instance != null) LobbyUI.Instance.OpenJoinUI();
+            });
+        }
+        else if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.OpenJoinUI();
         }
@@ -108,25 +179,54 @@ public class JustAButton : MonoBehaviour
 
     public void Quit()
     {
-        Application.Quit();
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                Application.Quit();
+            });
+        }
+        else
+        {
+            Application.Quit();
+        }
     }
 
     public void Options()
     {
         if (optionsButton != null) AnimateButtonPress(optionsButton);
-        if (isBusy || isOptionMenuOpen)
-        {
-            return;
-        }
+        if (isBusy || isOptionMenuOpen) return;
 
-        OpenOptions();
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                OpenOptions();
+            });
+        }
+        else
+        {
+            OpenOptions();
+        }
     }
 
     public void BackToOptions()
     {
         if (optionBackButton != null) AnimateButtonPress(optionBackButton);
-        CloseOptions();
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.TriggerTransition(() =>
+            {
+                CloseOptions();
+            });
+        }
+        else
+        {
+            CloseOptions();
+        }
     }
+
+    private float nextSliderAdjustTime;
 
     private void OpenOptions()
     {
@@ -142,6 +242,18 @@ public class JustAButton : MonoBehaviour
         if (OptionMenu != null)
         {
             OptionMenu.SetActive(true);
+        }
+
+        SetupVolumeSlider();
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(true);
+        }
+        else
+        {
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
         }
 
         if (optionBackButton != null)
@@ -165,6 +277,16 @@ public class JustAButton : MonoBehaviour
         if (OptionMenu != null)
         {
             OptionMenu.SetActive(false);
+        }
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(false);
+        }
+        else
+        {
+            Cursor.visible = false;
+            Cursor.lockState = CursorLockMode.Locked;
         }
 
         EnableMainButtons();
@@ -218,6 +340,38 @@ public class JustAButton : MonoBehaviour
             {
                 CloseOptions();
                 return;
+            }
+        }
+
+        // Handle Gamepad / Keyboard Horizontal Slider Control
+        if (musicVolumeSlider != null && Time.unscaledTime >= nextSliderAdjustTime)
+        {
+            float horizontal = 0f;
+
+            if (Keyboard.current != null)
+            {
+                if (Keyboard.current.leftArrowKey.isPressed || Keyboard.current.aKey.isPressed)
+                    horizontal = -1f;
+                else if (Keyboard.current.rightArrowKey.isPressed || Keyboard.current.dKey.isPressed)
+                    horizontal = 1f;
+            }
+
+            if (gamepad != null)
+            {
+                Vector2 dpadVal = gamepad.dpad.ReadValue();
+                Vector2 stickVal = gamepad.leftStick.ReadValue();
+
+                if (gamepad.dpad.left.isPressed || dpadVal.x <= -0.4f || stickVal.x <= -0.4f)
+                    horizontal = -1f;
+                else if (gamepad.dpad.right.isPressed || dpadVal.x >= 0.4f || stickVal.x >= 0.4f)
+                    horizontal = 1f;
+            }
+
+            if (Mathf.Abs(horizontal) > 0.1f)
+            {
+                float step = 0.05f * Mathf.Sign(horizontal);
+                musicVolumeSlider.value = Mathf.Clamp01(musicVolumeSlider.value + step);
+                nextSliderAdjustTime = Time.unscaledTime + 0.12f;
             }
         }
 
@@ -288,7 +442,6 @@ public class JustAButton : MonoBehaviour
             }
         }
 
-        // Gamepad selection ONLY via D-Pad (Left Stick disabled for UI button selection)
         Gamepad gamepad = GetGamepad();
 
         if (gamepad != null)
@@ -461,16 +614,32 @@ public class JustAButton : MonoBehaviour
     public void AnimateButtonPress(Button btn)
     {
         if (btn == null) return;
-        StartCoroutine(ButtonPunchRoutine(btn.transform));
+        Transform t = btn.transform;
+
+        if (activePunchCoroutines.ContainsKey(t) && activePunchCoroutines[t] != null)
+        {
+            StopCoroutine(activePunchCoroutines[t]);
+        }
+
+        activePunchCoroutines[t] = StartCoroutine(ButtonPunchRoutine(t));
     }
 
     private IEnumerator ButtonPunchRoutine(Transform targetTransform)
     {
         if (targetTransform == null) yield break;
-        Vector3 orig = targetTransform.localScale;
-        targetTransform.localScale = orig * 0.88f;
+
+        if (!initialButtonScales.ContainsKey(targetTransform))
+        {
+            initialButtonScales[targetTransform] = targetTransform.localScale;
+        }
+
+        Vector3 baseScale = initialButtonScales[targetTransform];
+        targetTransform.localScale = baseScale * 0.88f;
+
         yield return new WaitForSecondsRealtime(0.08f);
-        targetTransform.localScale = orig;
+
+        targetTransform.localScale = baseScale;
+        activePunchCoroutines.Remove(targetTransform);
     }
 
     private bool HasAnimatorParameter(
@@ -505,7 +674,6 @@ public class JustAButton : MonoBehaviour
         }
 
         uiInputModule.submit = null;
-
         uiInputModule.cancel = null;
     }
 }

@@ -2521,18 +2521,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FireflyController
   wanderRadius: 2.5
-  moveSpeed: 1
+  moveSpeed: 0.6
   directionChangeTime: 2.5
   bobAmount: 0.08
   bobSpeed: 2
   maxRotation: 18
   rotationSmoothness: 4
   flowerTag: Flower
-  flowerChance: 0.25
+  flowerChance: 0.4
   minimumFlowerDistance: 0.4
   flowerDetectionRadius: 4
   minimumSitTime: 2
-  maximumSitTime: 6
+  maximumSitTime: 4
   canSitOnUIButtons: 0
   glow: {fileID: 0}
   glowSprite: {fileID: 0}
@@ -4319,18 +4319,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FireflyController
   wanderRadius: 2.5
-  moveSpeed: 1
+  moveSpeed: 0.6
   directionChangeTime: 2.5
   bobAmount: 0.08
   bobSpeed: 2
   maxRotation: 18
   rotationSmoothness: 4
   flowerTag: Flower
-  flowerChance: 0.25
+  flowerChance: 0.4
   minimumFlowerDistance: 0.4
   flowerDetectionRadius: 4
   minimumSitTime: 2
-  maximumSitTime: 6
+  maximumSitTime: 4
   canSitOnUIButtons: 0
   glow: {fileID: 0}
   glowSprite: {fileID: 0}
@@ -7161,18 +7161,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FireflyController
   wanderRadius: 2.5
-  moveSpeed: 1
+  moveSpeed: 0.6
   directionChangeTime: 2.5
   bobAmount: 0.08
   bobSpeed: 2
   maxRotation: 18
   rotationSmoothness: 4
   flowerTag: Flower
-  flowerChance: 0.25
+  flowerChance: 0.4
   minimumFlowerDistance: 0.4
   flowerDetectionRadius: 4
   minimumSitTime: 2
-  maximumSitTime: 6
+  maximumSitTime: 4
   canSitOnUIButtons: 0
   glow: {fileID: 0}
   glowSprite: {fileID: 0}
@@ -7529,18 +7529,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FireflyController
   wanderRadius: 2.5
-  moveSpeed: 1
+  moveSpeed: 0.6
   directionChangeTime: 2.5
   bobAmount: 0.08
   bobSpeed: 2
   maxRotation: 18
   rotationSmoothness: 4
   flowerTag: Flower
-  flowerChance: 0.25
+  flowerChance: 0.4
   minimumFlowerDistance: 0.4
   flowerDetectionRadius: 4
   minimumSitTime: 2
-  maximumSitTime: 6
+  maximumSitTime: 4
   canSitOnUIButtons: 0
   glow: {fileID: 0}
   glowSprite: {fileID: 0}
@@ -8365,18 +8365,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FireflyController
   wanderRadius: 2.5
-  moveSpeed: 1
+  moveSpeed: 0.6
   directionChangeTime: 2.5
   bobAmount: 0.08
   bobSpeed: 2
   maxRotation: 18
   rotationSmoothness: 4
   flowerTag: Flower
-  flowerChance: 0.25
+  flowerChance: 0.4
   minimumFlowerDistance: 0.4
   flowerDetectionRadius: 4
   minimumSitTime: 2
-  maximumSitTime: 6
+  maximumSitTime: 4
   canSitOnUIButtons: 0
   glow: {fileID: 0}
   glowSprite: {fileID: 0}
@@ -8481,18 +8481,18 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FireflyController
   wanderRadius: 2.5
-  moveSpeed: 1
+  moveSpeed: 0.6
   directionChangeTime: 2.5
   bobAmount: 0.08
   bobSpeed: 2
   maxRotation: 18
   rotationSmoothness: 4
   flowerTag: Flower
-  flowerChance: 0.25
+  flowerChance: 0.4
   minimumFlowerDistance: 0.4
   flowerDetectionRadius: 4
   minimumSitTime: 2
-  maximumSitTime: 6
+  maximumSitTime: 4
   canSitOnUIButtons: 0
   glow: {fileID: 0}
   glowSprite: {fileID: 0}

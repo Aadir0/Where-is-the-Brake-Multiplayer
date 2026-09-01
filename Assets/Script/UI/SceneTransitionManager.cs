@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 public class SceneTransitionManager : MonoBehaviour
 {
@@ -12,7 +13,7 @@ public class SceneTransitionManager : MonoBehaviour
     [SerializeField] private RectTransform circleTransform;
 
     [Header("Animation Settings")]
-    [SerializeField] private float transitionDuration = 0.38f;
+    [SerializeField] private float transitionDuration = 0.35f;
     [SerializeField] private Vector3 maxCircleScale = new Vector3(25f, 25f, 1f);
 
     private bool isTransitioning = false;
@@ -26,6 +27,12 @@ public class SceneTransitionManager : MonoBehaviour
         }
 
         Instance = this;
+
+        if (transform.parent != null)
+        {
+            transform.SetParent(null);
+        }
+
         DontDestroyOnLoad(gameObject);
 
         LocateCirclePanel();
@@ -44,7 +51,7 @@ public class SceneTransitionManager : MonoBehaviour
     private void Start()
     {
         LocateCirclePanel();
-        if (circleTransitionPanel != null)
+        if (circleTransitionPanel != null && circleTransitionPanel != gameObject)
         {
             StartCoroutine(AnimateCircleInRoutine());
         }
@@ -52,21 +59,33 @@ public class SceneTransitionManager : MonoBehaviour
 
     public void LocateCirclePanel()
     {
-        if (circleTransitionPanel == null || circleTransform == null)
+        // Must NOT be this manager GameObject itself!
+        if (circleTransitionPanel != null && circleTransitionPanel != gameObject && circleTransform != null)
         {
-            circleTransitionPanel = null;
-            circleTransform = null;
+            return;
+        }
 
-            foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        circleTransitionPanel = null;
+        circleTransform = null;
+
+        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        {
+            if (go == gameObject) continue; // Never target the manager script's own GameObject
+            if (go.transform.IsChildOf(transform)) continue;
+
+            if (go.scene.isLoaded &&
+                (go.CompareTag("Transition") ||
+                 string.Equals(go.name, "CircleTransition", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(go.name, "TransitionPanel", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(go.name, "Circle", StringComparison.OrdinalIgnoreCase)))
             {
-                if (go.scene.isLoaded &&
-                    (go.CompareTag("Transition") ||
-                     string.Equals(go.name, "CircleTransition", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(go.name, "TransitionPanel", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(go.name, "Circle", StringComparison.OrdinalIgnoreCase)))
+                RectTransform rect = go.GetComponent<RectTransform>();
+                if (rect == null) rect = go.GetComponentInChildren<RectTransform>(true);
+
+                if (rect != null)
                 {
                     circleTransitionPanel = go;
-                    circleTransform = go.GetComponent<RectTransform>();
+                    circleTransform = rect;
                     break;
                 }
             }
@@ -75,12 +94,11 @@ public class SceneTransitionManager : MonoBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        // Re-locate panel in newly loaded scene
         circleTransitionPanel = null;
         circleTransform = null;
         LocateCirclePanel();
 
-        if (circleTransitionPanel != null)
+        if (circleTransitionPanel != null && circleTransitionPanel != gameObject)
         {
             StopAllCoroutines();
             isTransitioning = false;
@@ -90,7 +108,21 @@ public class SceneTransitionManager : MonoBehaviour
 
     public void TriggerTransition(Action onFullyCovered = null)
     {
-        if (isTransitioning) return;
+        LocateCirclePanel();
+
+        if (circleTransitionPanel == null || circleTransitionPanel == gameObject || circleTransform == null)
+        {
+            isTransitioning = false;
+            onFullyCovered?.Invoke();
+            return;
+        }
+
+        if (isTransitioning)
+        {
+            onFullyCovered?.Invoke();
+            return;
+        }
+
         StartCoroutine(TransitionRoutine(onFullyCovered));
     }
 
@@ -106,19 +138,23 @@ public class SceneTransitionManager : MonoBehaviour
     public IEnumerator AnimateCircleOutRoutine()
     {
         LocateCirclePanel();
-        if (circleTransitionPanel == null) yield break;
+        if (circleTransitionPanel == null || circleTransitionPanel == gameObject) yield break;
 
         circleTransitionPanel.SetActive(true);
         if (circleTransform == null) circleTransform = circleTransitionPanel.GetComponent<RectTransform>();
 
-        if (circleTransform != null) circleTransform.localScale = Vector3.zero;
+        if (circleTransform != null)
+        {
+            circleTransform.SetAsLastSibling();
+            circleTransform.anchoredPosition3D = Vector3.zero;
+            circleTransform.localScale = Vector3.zero;
+        }
 
         float elapsed = 0f;
         while (elapsed < transitionDuration)
         {
             elapsed += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(elapsed / transitionDuration);
-            // Smooth ease out scale up curve
             float easeT = Mathf.Sin(t * Mathf.PI * 0.5f);
 
             if (circleTransform != null)
@@ -135,19 +171,23 @@ public class SceneTransitionManager : MonoBehaviour
     public IEnumerator AnimateCircleInRoutine()
     {
         LocateCirclePanel();
-        if (circleTransitionPanel == null) yield break;
+        if (circleTransitionPanel == null || circleTransitionPanel == gameObject) yield break;
 
         circleTransitionPanel.SetActive(true);
         if (circleTransform == null) circleTransform = circleTransitionPanel.GetComponent<RectTransform>();
 
-        if (circleTransform != null) circleTransform.localScale = maxCircleScale;
+        if (circleTransform != null)
+        {
+            circleTransform.SetAsLastSibling();
+            circleTransform.anchoredPosition3D = Vector3.zero;
+            circleTransform.localScale = maxCircleScale;
+        }
 
         float elapsed = 0f;
         while (elapsed < transitionDuration)
         {
             elapsed += Time.unscaledDeltaTime;
             float t = Mathf.Clamp01(elapsed / transitionDuration);
-            // Smooth ease in scale down curve
             float easeT = 1f - Mathf.Cos(t * Mathf.PI * 0.5f);
 
             if (circleTransform != null)
@@ -165,16 +205,12 @@ public class SceneTransitionManager : MonoBehaviour
     {
         isTransitioning = true;
 
-        // 1. Scale UP circle to cover screen completely
         yield return StartCoroutine(AnimateCircleOutRoutine());
 
-        // 2. Perform scene load or button action once fully covered
         onFullyCovered?.Invoke();
 
-        // 3. Small pause while covered for seamless panel switch
-        yield return new WaitForSecondsRealtime(0.06f);
+        yield return new WaitForSecondsRealtime(0.04f);
 
-        // 4. Scale DOWN circle back to 0 and disable
         yield return StartCoroutine(AnimateCircleInRoutine());
 
         isTransitioning = false;
