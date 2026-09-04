@@ -2158,8 +2158,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 2d67b9ddca4d87b43acf1df5df4ca8c6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::RelayManager
-  defaultPort: 7777
-  defaultAddress: 127.0.0.1
+  clientConnectionTimeout: 30
 --- !u!114 &925046734
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2192,7 +2191,7 @@ MonoBehaviour:
   NetworkConfig:
     ProtocolVersion: 0
     NetworkTransport: {fileID: 925046727}
-    PlayerPrefab: {fileID: 7010108498064275808, guid: 38a932c2272f2ab4ea58a51ef448fbfa, type: 3}
+    PlayerPrefab: {fileID: 0}
     Prefabs:
       NetworkPrefabsLists:
       - {fileID: 11400000, guid: f7409d7f52bf69b42a39c161073ec18f, type: 2}
@@ -2213,7 +2212,7 @@ MonoBehaviour:
     EnableNetworkLogs: 1
     NetworkTopology: 0
     UseCMBService: 0
-    AutoSpawnPlayerPrefabClientSide: 1
+    AutoSpawnPlayerPrefabClientSide: 0
     NetworkMessageMetrics: 1
     NetworkProfilingMetrics: 1
     OldPrefabList: []

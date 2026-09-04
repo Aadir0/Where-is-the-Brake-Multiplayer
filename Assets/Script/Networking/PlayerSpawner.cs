@@ -20,6 +20,7 @@ public class PlayerSpawner : MonoBehaviour
     private readonly Dictionary<ulong, NetworkObject> spawnedPlayers = new Dictionary<ulong, NetworkObject>();
     private readonly List<ulong> pendingSpawnClients = new List<ulong>();
     private SpawnPoint[] cachedSpawnPoints;
+    private bool networkEventsSubscribed = false;
 
     private void Awake()
     {
@@ -40,23 +41,53 @@ public class PlayerSpawner : MonoBehaviour
 
     private void OnEnable()
     {
-        if (NetworkManager.Singleton != null)
-        {
-            NetworkManager.Singleton.OnServerStarted += OnServerStarted;
-            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
-            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
+        SceneManager.sceneLoaded += OnUnitySceneLoaded;
 
-            if (NetworkManager.Singleton.SceneManager != null)
-            {
-                NetworkManager.Singleton.SceneManager.OnSceneEvent += OnSceneEvent;
-            }
+        // ROOT-CAUSE FIX: NetworkManager.Singleton is assigned inside NetworkManager.OnEnable(), NOT
+        // Awake(). PlayerSpawner lives on the SAME GameObject as NetworkManager, and Unity does NOT
+        // guarantee the OnEnable order of components on one GameObject -- so Singleton can still be null
+        // right now. If we subscribed here directly (behind an `if (Singleton != null)` guard), the guard
+        // would fail and OnServerStarted / OnClientConnected / OnSceneEvent would NEVER get subscribed.
+        // That left Unity's premature sceneLoaded as the only working spawn trigger (cars on host only),
+        // and once that was removed, nothing spawned at all. Defer subscription until Singleton exists.
+        StartCoroutine(SubscribeToNetworkEventsWhenReady());
+    }
+
+    private IEnumerator SubscribeToNetworkEventsWhenReady()
+    {
+        while (NetworkManager.Singleton == null)
+        {
+            yield return null;
+        }
+        SubscribeToNetworkEvents();
+    }
+
+    private void SubscribeToNetworkEvents()
+    {
+        if (Instance != this) return;                 // only the surviving DDOL singleton subscribes
+        if (networkEventsSubscribed) return;
+        if (NetworkManager.Singleton == null) return;
+
+        NetworkManager.Singleton.OnServerStarted += OnServerStarted;
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+        NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
+
+        // SceneManager is only created when the host/server starts, so it may still be null here.
+        // OnServerStarted re-subscribes OnSceneEvent once SceneManager exists (and again on each new
+        // session); subscribe now too if it already happens to be available.
+        if (NetworkManager.Singleton.SceneManager != null)
+        {
+            NetworkManager.Singleton.SceneManager.OnSceneEvent -= OnSceneEvent;
+            NetworkManager.Singleton.SceneManager.OnSceneEvent += OnSceneEvent;
         }
 
-        SceneManager.sceneLoaded += OnUnitySceneLoaded;
+        networkEventsSubscribed = true;
     }
 
     private void OnDisable()
     {
+        SceneManager.sceneLoaded -= OnUnitySceneLoaded;
+
         if (NetworkManager.Singleton != null)
         {
             NetworkManager.Singleton.OnServerStarted -= OnServerStarted;
@@ -69,7 +100,7 @@ public class PlayerSpawner : MonoBehaviour
             }
         }
 
-        SceneManager.sceneLoaded -= OnUnitySceneLoaded;
+        networkEventsSubscribed = false;
     }
 
     private void OnServerStarted()
@@ -113,14 +144,24 @@ public class PlayerSpawner : MonoBehaviour
 
     private void OnUnitySceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
-        HandleSceneLoaded(scene.name);
+        // IMPORTANT: This is Unity's LOCAL sceneLoaded callback. On the server it fires the instant the
+        // SERVER finishes loading the scene locally, which happens DURING NGO's networked scene-load
+        // sequence -- BEFORE connected clients have finished loading the scene. Spawning player objects
+        // here is too early: the SpawnAsPlayerObject messages are generated while remote clients are not
+        // yet synchronized for the new scene, so those clients never receive the cars.
+        // (Symptom this caused: cars appeared on the host but not on the client.)
+        //
+        // Player spawning is therefore driven exclusively by NGO's SceneEventType.LoadEventCompleted in
+        // OnSceneEvent below, which fires only AFTER every client has finished loading the scene and is
+        // ready to receive spawned NetworkObjects. Do NOT re-add spawning to this method.
     }
 
     private void OnSceneEvent(SceneEvent sceneEvent)
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
+        // LoadEventCompleted = "all clients have finished loading the scene". This is the only point at
+        // which it is safe to spawn player NetworkObjects and have them replicate to every client.
         if (sceneEvent.SceneEventType == SceneEventType.LoadEventCompleted)
         {
             string loadedScene = string.IsNullOrEmpty(sceneEvent.SceneName) ? SceneManager.GetActiveScene().name : sceneEvent.SceneName;
@@ -145,6 +186,10 @@ public class PlayerSpawner : MonoBehaviour
             return;
         }
 
+        // Driven solely by NGO's LoadEventCompleted, which fires exactly once per networked scene load
+        // and only after every client has finished loading. No cross-trigger debounce is needed here:
+        // SpawnOrRepositionPlayerForClient is idempotent (it repositions an already-spawned car rather
+        // than creating a duplicate), so this is safe even if it were ever re-entered for the same scene.
         SpawnAllPlayersInScene();
     }
 

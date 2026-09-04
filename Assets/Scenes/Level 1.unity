@@ -1418,7 +1418,7 @@ SpriteRenderer:
   m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: 1664070943
   m_SortingLayer: 2
-  m_SortingOrder: 1
+  m_SortingOrder: 2
   m_MaskInteraction: 0
   m_Sprite: {fileID: -282803389941045344, guid: 45df09004e383bc44a2f7f6dfb7e7fcb, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
@@ -2033,7 +2033,7 @@ SpriteRenderer:
   m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: 1664070943
   m_SortingLayer: 2
-  m_SortingOrder: 1
+  m_SortingOrder: 2
   m_MaskInteraction: 0
   m_Sprite: {fileID: -282803389941045344, guid: 45df09004e383bc44a2f7f6dfb7e7fcb, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
@@ -2533,13 +2533,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 878276364}
   fireflyLight: {fileID: 257008937}
   minimumGlow: 0.5
@@ -4331,13 +4324,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1186138927}
   fireflyLight: {fileID: 796035118}
   minimumGlow: 0.5
@@ -7173,13 +7159,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1604042265}
   fireflyLight: {fileID: 241114086}
   minimumGlow: 0.5
@@ -7541,13 +7520,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1789400711}
   fireflyLight: {fileID: 475971282}
   minimumGlow: 0.5
@@ -8377,13 +8349,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 950403346187576454}
   fireflyLight: {fileID: 7322736141895562179}
   minimumGlow: 0.5
@@ -8493,13 +8458,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 285945072516712481}
   fireflyLight: {fileID: 7735203873410965348}
   minimumGlow: 0.5
@@ -9259,7 +9217,7 @@ SpriteRenderer:
   m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: 1664070943
   m_SortingLayer: 2
-  m_SortingOrder: 1
+  m_SortingOrder: 2
   m_MaskInteraction: 0
   m_Sprite: {fileID: -282803389941045344, guid: 45df09004e383bc44a2f7f6dfb7e7fcb, type: 3}
   m_Color: {r: 1, g: 1, b: 1, a: 1}

@@ -72,6 +72,8 @@ public class NetworkRaceManager : NetworkBehaviour
             readyPlayersSet.Clear();
             finishedPlayers.Clear();
         }
+
+        SceneManager.sceneLoaded += OnSceneLoaded;
     }
 
     public override void OnNetworkDespawn()
@@ -80,6 +82,21 @@ public class NetworkRaceManager : NetworkBehaviour
         countdownTimer.OnValueChanged -= HandleCountdownTimerChanged;
         connectedPlayerCount.OnValueChanged -= HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged -= HandleReadyPlayerCountChanged;
+
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (IsServer)
+        {
+            finishedPlayers.Clear();
+            readyPlayersSet.Clear();
+            readyPlayerCount.Value = 0;
+            currentRaceState.Value = RaceState.LobbyWaiting;
+            winnerClientId.Value = 9999;
+            finishWindowTimer.Value = 0f;
+        }
     }
 
     private void HandleRaceStateChanged(RaceState previousVal, RaceState newVal)
@@ -130,6 +147,12 @@ public class NetworkRaceManager : NetworkBehaviour
         {
             LevelTimer.Instance.StartTimerServer();
         }
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void RequestPlayerCrossedFinishServerRpc(ulong clientId)
+    {
+        PlayerCrossedFinishServer(clientId);
     }
 
     public void PlayerCrossedFinishServer(ulong clientId)
@@ -250,6 +273,18 @@ public class NetworkRaceManager : NetworkBehaviour
             else
             {
                 SceneManager.LoadScene(nextSceneIndex);
+            }
+        }
+        else
+        {
+            // Last level completed — load Ending scene
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null)
+            {
+                NetworkManager.Singleton.SceneManager.LoadScene("Ending", LoadSceneMode.Single);
+            }
+            else
+            {
+                SceneManager.LoadScene("Ending");
             }
         }
     }

@@ -84,6 +84,12 @@ public class LobbyUI : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        StartCoroutine(SubscribeRelayManagerWhenReady());
+        StartCoroutine(SubscribeNetworkCallbacksWhenReady());
+    }
+
     private void OnEnable()
     {
         if (menuButtonAnimator == null)
@@ -97,19 +103,56 @@ public class LobbyUI : MonoBehaviour
         if (startGameButton != null) startGameButton.onClick.AddListener(OnStartGameClicked);
         if (leaveRoomButton != null) leaveRoomButton.onClick.AddListener(OnLeaveRoomClicked);
 
+        StartCoroutine(SubscribeRelayManagerWhenReady());
+        StartCoroutine(SubscribeNetworkCallbacksWhenReady());
+        CacheOriginalScales();
+    }
+
+    private IEnumerator SubscribeRelayManagerWhenReady()
+    {
+        while (RelayManager.Instance == null)
+        {
+            yield return null;
+        }
+
+        SubscribeToRelayManager();
+    }
+
+    private void SubscribeToRelayManager()
+    {
         if (RelayManager.Instance != null)
         {
+            RelayManager.Instance.OnStatusChanged -= UpdateStatusText;
+            RelayManager.Instance.OnErrorEncountered -= HandleError;
+            RelayManager.Instance.OnClientConnectedToHost -= HandleRelayClientConnected;
+            RelayManager.Instance.OnClientDisconnectedFromHost -= HandleRelayClientDisconnected;
+
             RelayManager.Instance.OnStatusChanged += UpdateStatusText;
             RelayManager.Instance.OnErrorEncountered += HandleError;
+            RelayManager.Instance.OnClientConnectedToHost += HandleRelayClientConnected;
+            RelayManager.Instance.OnClientDisconnectedFromHost += HandleRelayClientDisconnected;
         }
+    }
 
-        if (NetworkManager.Singleton != null)
+    private IEnumerator SubscribeNetworkCallbacksWhenReady()
+    {
+        while (NetworkManager.Singleton == null)
         {
-            NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
-            NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
+            yield return null;
         }
 
-        CacheOriginalScales();
+        EnsureNetworkCallbacksSubscribed();
+    }
+
+    public void EnsureNetworkCallbacksSubscribed()
+    {
+        if (NetworkManager.Singleton == null) return;
+
+        NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
+        NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnected;
+
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+        NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
     }
 
     private void OnDisable()
@@ -124,6 +167,8 @@ public class LobbyUI : MonoBehaviour
         {
             RelayManager.Instance.OnStatusChanged -= UpdateStatusText;
             RelayManager.Instance.OnErrorEncountered -= HandleError;
+            RelayManager.Instance.OnClientConnectedToHost -= HandleRelayClientConnected;
+            RelayManager.Instance.OnClientDisconnectedFromHost -= HandleRelayClientDisconnected;
         }
 
         if (NetworkManager.Singleton != null)
@@ -131,7 +176,6 @@ public class LobbyUI : MonoBehaviour
             NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
             NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnected;
         }
-
         UnregisterMessagingHandlers();
     }
 
@@ -268,11 +312,23 @@ public class LobbyUI : MonoBehaviour
         if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
         if (lobbyPanel != null) lobbyPanel.SetActive(true);
 
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(true);
+        }
+        else
+        {
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+        }
+
         if (joinCodeInput != null)
         {
             joinCodeInput.characterLimit = 15;
             joinCodeInput.gameObject.SetActive(true);
             joinCodeInput.text = "";
+            joinCodeInput.Select();
+            joinCodeInput.ActivateInputField();
         }
 
         if (joinGameButton != null)
@@ -331,6 +387,7 @@ public class LobbyUI : MonoBehaviour
 
         SetInteractable(false);
         string code = await RelayManager.Instance.StartHostWithRelay();
+        EnsureNetworkCallbacksSubscribed();
         SetInteractable(true);
 
         if (!string.IsNullOrEmpty(code))
@@ -368,7 +425,10 @@ public class LobbyUI : MonoBehaviour
         SetInteractable(false);
         UpdateStatusText("Connecting to room...");
 
+        // Ensure callbacks are set before attempting connection
+        EnsureNetworkCallbacksSubscribed();
         bool success = await RelayManager.Instance.StartClientWithRelay(code);
+        EnsureNetworkCallbacksSubscribed();
 
         if (!success)
         {
@@ -437,6 +497,17 @@ public class LobbyUI : MonoBehaviour
     {
         if (mainMenuPanel != null) mainMenuPanel.SetActive(true);
         if (lobbyPanel != null) lobbyPanel.SetActive(false);
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(false);
+        }
+        else
+        {
+            Cursor.visible = false;
+            Cursor.lockState = CursorLockMode.Locked;
+        }
+
         activeLobbyButtons.Clear();
         SetInteractable(true);
         UpdateStatusText("Ready.");
@@ -522,28 +593,52 @@ public class LobbyUI : MonoBehaviour
 
     private void OnClientConnected(ulong clientId)
     {
-        if (NetworkManager.Singleton.IsHost)
+        NetworkManager networkManager = NetworkManager.Singleton;
+        if (networkManager == null)
+        {
+            return;
+        }
+
+        if (networkManager.IsHost)
         {
             BroadcastPlayerCountServer();
         }
-        else if (clientId == NetworkManager.Singleton.LocalClientId)
+        else if (clientId == networkManager.LocalClientId)
         {
-            ShowClientLobbyUI(RelayManager.Instance != null ? RelayManager.Instance.JoinCode : "CONNECTED");
-            RegisterMessagingHandlers();
+            HandleRelayClientConnected();
         }
     }
 
     private void OnClientDisconnected(ulong clientId)
     {
-        if (NetworkManager.Singleton.IsHost)
+        NetworkManager networkManager = NetworkManager.Singleton;
+        if (networkManager == null)
+        {
+            return;
+        }
+
+        if (networkManager.IsHost)
         {
             BroadcastPlayerCountServer();
         }
-        else if (clientId == NetworkManager.Singleton.LocalClientId)
+        else if (clientId == networkManager.LocalClientId)
         {
-            UpdateStatusText("Disconnected from host.");
-            ShowMainMenuUI();
+            string reason = networkManager.DisconnectReason;
+            string msg = string.IsNullOrEmpty(reason) ? "Disconnected from host." : $"Connection failed: {reason}";
+            HandleRelayClientDisconnected(msg);
         }
+    }
+
+    private void HandleRelayClientConnected()
+    {
+        ShowClientLobbyUI(RelayManager.Instance != null ? RelayManager.Instance.JoinCode : "CONNECTED");
+        RegisterMessagingHandlers();
+    }
+
+    private void HandleRelayClientDisconnected(string message)
+    {
+        ShowMainMenuUI();
+        UpdateStatusText(message);
     }
 
     private void RegisterMessagingHandlers()

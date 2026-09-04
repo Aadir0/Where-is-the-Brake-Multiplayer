@@ -420,6 +420,22 @@ public class NetworkCarController : NetworkBehaviour
     public void TeleportCarRpc(Vector3 position, Quaternion rotation)
     {
         NetworkTransform netTransform = GetComponent<NetworkTransform>();
+
+        // The car's NetworkTransform is owner-authoritative (AuthorityMode.Owner), so ONLY the motion
+        // authority (the owning peer) may commit a Teleport or move the physics body. Calling
+        // NetworkTransform.Teleport() on any other peer throws "Teleporting on non-authoritative side
+        // is not allowed!". Because this RPC fans out to Everyone, that exception previously fired on
+        // the host (for the client's car) and on the client (for the host's car); the thrown RPC
+        // aborted message processing and left BOTH cars stranded at the off-screen hide position, so
+        // nothing appeared on the client. Non-authority peers receive the new position automatically
+        // through NetworkTransform state replication, so they must not touch the transform/rigidbody.
+        bool isMotionAuthority = netTransform == null || netTransform.CanCommitToTransform;
+        if (!isMotionAuthority)
+        {
+            StopCarAudio();
+            return;
+        }
+
         if (netTransform != null)
         {
             netTransform.Teleport(position, rotation, transform.localScale);
@@ -460,6 +476,10 @@ public class NetworkCarController : NetworkBehaviour
         ResetSurfaceModifiers();
 
         ApplyLevelJumpSettings();
+        if (LevelJumpSettings.Instance == null)
+        {
+            StartCoroutine(RetryApplyLevelJumpSettings());
+        }
         currentSpeed = speed;
         SetupStartPromptVisual();
 
@@ -479,6 +499,22 @@ public class NetworkCarController : NetworkBehaviour
         }
 
         StopCarAudio();
+    }
+
+    private IEnumerator RetryApplyLevelJumpSettings()
+    {
+        float timeout = 2f;
+        float elapsed = 0f;
+        while (LevelJumpSettings.Instance == null && elapsed < timeout)
+        {
+            elapsed += 0.1f;
+            yield return new WaitForSeconds(0.1f);
+        }
+        if (LevelJumpSettings.Instance != null)
+        {
+            ApplyLevelJumpSettings();
+            currentSpeed = speed;
+        }
     }
 
     public void ApplySurfaceModifiers(float speedMult, float driftMult)
@@ -568,7 +604,7 @@ public class NetworkCarController : NetworkBehaviour
 
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
-        if (healthComp != null && healthComp.isDead.Value)
+        if (healthComp != null && (healthComp.isDead.Value || healthComp.LocalDeathRequested))
         {
             StopCarAudio();
             return;
@@ -619,6 +655,7 @@ public class NetworkCarController : NetworkBehaviour
     private void HandleActionPressed()
     {
         if (!IsOwner && !IsLocalPlayer) return;
+        ApplyLevelJumpSettings();
 
         if (Time.frameCount == lastActionFrame) return;
         lastActionFrame = Time.frameCount;
@@ -663,7 +700,7 @@ public class NetworkCarController : NetworkBehaviour
     private void TryExecuteJump()
     {
         if (!IsOwner && !IsLocalPlayer) return;
-        if (!isBoosted || (healthComp != null && healthComp.isDead.Value) || hasWonPlayer) return;
+        if (!isBoosted || (healthComp != null && (healthComp.isDead.Value || healthComp.LocalDeathRequested)) || hasWonPlayer) return;
         if (LevelTimer.Instance != null && LevelTimer.Instance.IsTimeOver) return;
 
         if (isJumping) return;
@@ -683,7 +720,7 @@ public class NetworkCarController : NetworkBehaviour
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
-        if (healthComp != null && healthComp.isDead.Value)
+        if (healthComp != null && (healthComp.isDead.Value || healthComp.LocalDeathRequested))
         {
             StopCarAudio();
             return;
@@ -1022,14 +1059,13 @@ public class NetworkCarController : NetworkBehaviour
         if (distance >= tyreMarkSpacing)
         {
             float rotationDegrees = transform.eulerAngles.z + tyreMarkRotationOffset;
-            SpawnTyreMarkRpc(currentPosition, rotationDegrees);
+            SpawnTyreMarkLocal(currentPosition, rotationDegrees);
             lastPosition = currentPosition;
             distance = 0f;
         }
     }
 
-    [Rpc(SendTo.Everyone)]
-    private void SpawnTyreMarkRpc(Vector2 position, float rotationDegrees)
+    private void SpawnTyreMarkLocal(Vector2 position, float rotationDegrees)
     {
         if (tyreMarkPrefab != null)
         {

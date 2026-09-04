@@ -37,6 +37,13 @@ public class CarHealth : NetworkBehaviour
     private NetworkCarController carController;
     private Coroutine enableRestartCoroutine;
     private bool isOverlappingHole = false;
+    private bool localDeathRequested = false;
+    private bool deathResponseApplied = false; // guards ApplyLocalDeathResponse so client-side prediction + the isDead sync don't double-apply visuals/UI/camera
+
+    // Exposed so NetworkCarController can stop driving the car the INSTANT the owner locally detects
+    // death, instead of waiting for the server's isDead NetworkVariable to round-trip back (that
+    // round-trip is exactly what made the client car "keep going for a few seconds" after falling in).
+    public bool LocalDeathRequested => localDeathRequested;
 
     private void Awake()
     {
@@ -50,6 +57,9 @@ public class CarHealth : NetworkBehaviour
     {
         currentHealth.OnValueChanged += OnHealthChanged;
         isDead.OnValueChanged += OnDeadStateChanged;
+
+        localDeathRequested = false;
+        deathResponseApplied = false;
 
         if (IsServer)
         {
@@ -71,6 +81,7 @@ public class CarHealth : NetworkBehaviour
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (isDead.Value) return;
+        if (localDeathRequested) return;
 
         CheckImmediateHoleOverlap();
     }
@@ -87,12 +98,18 @@ public class CarHealth : NetworkBehaviour
     {
         if (newState)
         {
-            HandleDeathVisuals();
+            // Authoritative confirmation from the server. On the OWNER client this usually runs AFTER
+            // ApplyLocalDeathResponse() already fired from client-side prediction, so the guard inside
+            // makes it a no-op (no double camera shake / zoom / UI). On every OTHER peer (e.g. the host
+            // watching the client's car) this is the first time death is applied, so their copy of the
+            // car hides here too.
+            ApplyLocalDeathResponse();
             OnDeath?.Invoke();
-            ShowDeadUI();
         }
         else
         {
+            localDeathRequested = false;
+            deathResponseApplied = false;
             HandleRespawnVisuals();
             OnRespawn?.Invoke();
             HideDeadUI();
@@ -169,6 +186,7 @@ public class CarHealth : NetworkBehaviour
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (isDead.Value) return;
+        if (localDeathRequested) return;
 
         if (carController == null) carController = GetComponent<NetworkCarController>();
 
@@ -177,8 +195,10 @@ public class CarHealth : NetworkBehaviour
 
         if (jumpExpired)
         {
+            localDeathRequested = true;
             RequestTakeDamageRpc(maxHealth);
             PlayDeathEffectsRpc(transform.position);
+            ApplyLocalDeathResponse(); // client-side prediction: stop, hide & show UI NOW; do not wait for isDead to round-trip
         }
     }
 
@@ -186,6 +206,7 @@ public class CarHealth : NetworkBehaviour
     {
         if (!IsOwner && !IsLocalPlayer) return;
         if (isDead.Value) return;
+        if (localDeathRequested) return;
 
         if (carController == null) carController = GetComponent<NetworkCarController>();
 
@@ -270,9 +291,11 @@ public class CarHealth : NetworkBehaviour
             if (insideHoleOrTrap)
             {
                 isOverlappingHole = true;
+                localDeathRequested = true;
                 Debug.Log($"[CarHealth DANGER] Hole Layer detected after jump expired! Executing Death Sequence (IsOwner: {IsOwner})");
                 RequestTakeDamageRpc(maxHealth);
                 PlayDeathEffectsRpc(transform.position);
+                ApplyLocalDeathResponse(); // client-side prediction: stop, hide & show UI NOW; do not wait for isDead to round-trip
             }
         }
     }
@@ -345,8 +368,25 @@ public class CarHealth : NetworkBehaviour
         currentHealth.Value = maxHealth;
         isDead.Value = false;
         isOverlappingHole = false;
+        localDeathRequested = false;
         if (carCollider != null) carCollider.enabled = true;
         if (spriteRenderer != null) spriteRenderer.enabled = true;
+    }
+
+    // Applies the LOCAL death response exactly once: stop & hide the car (HandleDeathVisuals) and show
+    // the Game Over UI (ShowDeadUI, which is owner-guarded internally). Called from two places:
+    //   1. Client-side prediction, the instant the OWNER detects a hole/trap  -> immediate feedback.
+    //   2. OnDeadStateChanged, when the server's authoritative isDead syncs   -> covers non-owner peers,
+    //      and is a harmless no-op on the owner because prediction already ran.
+    // The deathResponseApplied guard makes it idempotent, so camera shake/zoom and the UI animation are
+    // never triggered twice for a single death. It is reset to false on respawn (OnDeadStateChanged=false).
+    private void ApplyLocalDeathResponse()
+    {
+        if (deathResponseApplied) return;
+        deathResponseApplied = true;
+
+        HandleDeathVisuals();
+        ShowDeadUI();
     }
 
     private void HandleDeathVisuals()

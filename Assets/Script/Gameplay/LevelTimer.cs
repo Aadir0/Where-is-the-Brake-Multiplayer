@@ -44,10 +44,14 @@ public class LevelTimer : NetworkBehaviour
 
     private void Awake()
     {
+        // LevelTimer lives in-scene only in Level 1 and is DontDestroyOnLoad so the cumulative run
+        // time carries across levels. On a replay (return to menu -> start again) a stale timer from
+        // the previous session can survive in DontDestroyOnLoad. The freshly loaded Level 1 instance
+        // is the one that gets network-spawned this session, so it must take over. Destroying the NEW
+        // instance instead would leave a dead, un-networked timer as Instance and break timer sync.
         if (Instance != null && Instance != this)
         {
-            Destroy(gameObject);
-            return;
+            Destroy(Instance.gameObject);
         }
 
         Instance = this;
@@ -227,25 +231,6 @@ public class LevelTimer : NetworkBehaviour
         }
 
         UpdateTimerDisplay(GetRemainingTime());
-
-        if (IsTimeOver)
-        {
-            bool confirmPressed = false;
-            if (Keyboard.current != null && (Keyboard.current.spaceKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame))
-            {
-                confirmPressed = true;
-            }
-
-            if (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame)
-            {
-                confirmPressed = true;
-            }
-
-            if (confirmPressed)
-            {
-                OnMainMenuButtonClicked();
-            }
-        }
     }
 
     private void HandleTimerExpiration()
@@ -270,22 +255,34 @@ public class LevelTimer : NetworkBehaviour
 
     private IEnumerator DelayedLoadEndingRoutine()
     {
-        yield return new WaitForSeconds(3.0f);
+        yield return new WaitForSeconds(2.5f);
 
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && IsServer)
+        Action loadEndingAction = () =>
         {
-            if (NetworkManager.Singleton.SceneManager != null)
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && IsServer)
             {
-                NetworkManager.Singleton.SceneManager.LoadScene("Ending", LoadSceneMode.Single);
+                if (NetworkManager.Singleton.SceneManager != null)
+                {
+                    NetworkManager.Singleton.SceneManager.LoadScene("Ending", LoadSceneMode.Single);
+                }
+                else
+                {
+                    SceneManager.LoadScene("Ending");
+                }
             }
-            else
+            else if (!IsNetworkActive)
             {
                 SceneManager.LoadScene("Ending");
             }
-        }
-        else if (!IsNetworkActive)
+        };
+
+        if (SceneTransitionManager.Instance != null)
         {
-            SceneManager.LoadScene("Ending");
+            SceneTransitionManager.Instance.TriggerTransition(loadEndingAction);
+        }
+        else
+        {
+            loadEndingAction.Invoke();
         }
     }
 

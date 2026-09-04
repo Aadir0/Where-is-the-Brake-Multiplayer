@@ -226,7 +226,7 @@ public class FinishLine : MonoBehaviour
             {
                 if (NetworkRaceManager.Instance != null)
                 {
-                    NetworkRaceManager.Instance.PlayerCrossedFinishServer(netObj.OwnerClientId);
+                    NetworkRaceManager.Instance.RequestPlayerCrossedFinishServerRpc(netObj.OwnerClientId);
                 }
 
                 if (netObj.IsOwner && !hasWon)
