@@ -42,11 +42,6 @@ public class DeathMarkerManager : MonoBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        if (scene.buildIndex == currentSceneBuildIndex)
-        {
-            return;
-        }
-
         ClearDeathMarkers();
         currentSceneBuildIndex = scene.buildIndex;
     }
@@ -80,8 +75,6 @@ public class DeathMarkerManager : MonoBehaviour
             finalPosition,
             Quaternion.identity
         );
-
-        DontDestroyOnLoad(marker);
 
         // Disable colliders on spawned death marker
         Collider2D[] colliders2D = marker.GetComponentsInChildren<Collider2D>(true);

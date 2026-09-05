@@ -144,24 +144,21 @@ public class PlayerSpawner : MonoBehaviour
 
     private void OnUnitySceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        // IMPORTANT: This is Unity's LOCAL sceneLoaded callback. On the server it fires the instant the
-        // SERVER finishes loading the scene locally, which happens DURING NGO's networked scene-load
-        // sequence -- BEFORE connected clients have finished loading the scene. Spawning player objects
-        // here is too early: the SpawnAsPlayerObject messages are generated while remote clients are not
-        // yet synchronized for the new scene, so those clients never receive the cars.
-        // (Symptom this caused: cars appeared on the host but not on the client.)
-        //
-        // Player spawning is therefore driven exclusively by NGO's SceneEventType.LoadEventCompleted in
-        // OnSceneEvent below, which fires only AFTER every client has finished loading the scene and is
-        // ready to receive spawned NetworkObjects. Do NOT re-add spawning to this method.
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsServer)
+        {
+            // When host is playing solo, spawn immediately on scene load
+            if (NetworkManager.Singleton.ConnectedClientsIds.Count <= 1 && IsGameplayScene(scene.name))
+            {
+                HandleSceneLoaded(scene.name);
+            }
+        }
     }
 
     private void OnSceneEvent(SceneEvent sceneEvent)
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
 
-        // LoadEventCompleted = "all clients have finished loading the scene". This is the only point at
-        // which it is safe to spawn player NetworkObjects and have them replicate to every client.
+        // In multiplayer, spawn and synchronize only after ALL clients have finished loading the scene into memory!
         if (sceneEvent.SceneEventType == SceneEventType.LoadEventCompleted)
         {
             string loadedScene = string.IsNullOrEmpty(sceneEvent.SceneName) ? SceneManager.GetActiveScene().name : sceneEvent.SceneName;
@@ -182,14 +179,10 @@ public class PlayerSpawner : MonoBehaviour
 
         if (!IsGameplayScene(sceneName))
         {
-            HideAllCarsOffscreen();
+            DespawnAllPlayers();
             return;
         }
 
-        // Driven solely by NGO's LoadEventCompleted, which fires exactly once per networked scene load
-        // and only after every client has finished loading. No cross-trigger debounce is needed here:
-        // SpawnOrRepositionPlayerForClient is idempotent (it repositions an already-spawned car rather
-        // than creating a duplicate), so this is safe even if it were ever re-entered for the same scene.
         SpawnAllPlayersInScene();
     }
 
@@ -200,7 +193,7 @@ public class PlayerSpawner : MonoBehaviour
         string activeSceneName = SceneManager.GetActiveScene().name;
         if (!IsGameplayScene(activeSceneName))
         {
-            HideAllCarsOffscreen();
+            DespawnAllPlayers();
             return;
         }
 
@@ -214,7 +207,7 @@ public class PlayerSpawner : MonoBehaviour
 
         NotifyPlayerCountToAllClients();
 
-        if (NetworkRaceManager.Instance != null)
+        if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsServer)
         {
             NetworkRaceManager.Instance.StartCountdownServer();
         }
@@ -268,15 +261,30 @@ public class PlayerSpawner : MonoBehaviour
         }
 
         GameObject playerObj = Instantiate(targetPrefab, spawnPos, spawnRot);
+        DontDestroyOnLoad(playerObj);
         NetworkObject netObj = playerObj.GetComponent<NetworkObject>();
 
         if (netObj != null)
         {
-            netObj.SpawnAsPlayerObject(clientId, true);
+            netObj.SpawnAsPlayerObject(clientId, false);
             spawnedPlayers[clientId] = netObj;
             RepositionCar(netObj, spawnPos, spawnRot);
             Debug.Log($"[PlayerSpawner SUCCESS] Spawned official Player Object for Client {clientId} at Position: {spawnPos}");
         }
+    }
+
+    private void DespawnAllPlayers()
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
+
+        foreach (var kvp in new List<KeyValuePair<ulong, NetworkObject>>(spawnedPlayers))
+        {
+            if (kvp.Value != null && kvp.Value.IsSpawned)
+            {
+                kvp.Value.Despawn(true);
+            }
+        }
+        spawnedPlayers.Clear();
     }
 
     private void RepositionCar(NetworkObject netObj, Vector3 position, Quaternion rotation)
@@ -307,40 +315,6 @@ public class PlayerSpawner : MonoBehaviour
         }
     }
 
-    private void HideAllCarsOffscreen()
-    {
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsServer) return;
-
-        Vector3 offscreenPos = new Vector3(9999f, 9999f, 0f);
-
-        foreach (var clientKvp in NetworkManager.Singleton.ConnectedClients)
-        {
-            if (clientKvp.Value.PlayerObject != null && clientKvp.Value.PlayerObject.IsSpawned)
-            {
-                Transform carTransform = clientKvp.Value.PlayerObject.transform;
-                Collider2D col = carTransform.GetComponent<Collider2D>();
-                if (col != null) col.enabled = false;
-
-                CarHealth carHealth = carTransform.GetComponent<CarHealth>();
-                if (carHealth != null)
-                {
-                    carHealth.isInvulnerableDuringSpawn = true;
-                    carHealth.ResetHealthAndStateServer();
-                }
-
-                NetworkCarController carCtrl = carTransform.GetComponent<NetworkCarController>();
-                if (carCtrl != null)
-                {
-                    carCtrl.TeleportCarRpc(offscreenPos, Quaternion.identity);
-                    carCtrl.ResetCarBoostStateRpc();
-                }
-                else
-                {
-                    carTransform.position = offscreenPos;
-                }
-            }
-        }
-    }
 
     public Vector3 GetSpawnPosition(int playerIndex, out Quaternion rotation)
     {

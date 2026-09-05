@@ -13,6 +13,11 @@ public class CameraZoom2D : MonoBehaviour
     private void Start()
     {
         cam = GetComponent<Camera>();
+        isZooming = false;
+        if (cam != null)
+        {
+            cam.orthographicSize = normalSize;
+        }
     }
 
     private void Update()

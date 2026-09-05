@@ -1,4 +1,5 @@
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
 
 public class CarRespawn : NetworkBehaviour
@@ -26,6 +27,19 @@ public class CarRespawn : NetworkBehaviour
         lastCheckpointPosition = position;
         lastCheckpointRotation = rotation;
         hasCheckpoint = true;
+
+        if (IsOwner && !IsServer && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            UpdateCheckpointServerRpc(position, rotation);
+        }
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void UpdateCheckpointServerRpc(Vector3 position, Quaternion rotation)
+    {
+        lastCheckpointPosition = position;
+        lastCheckpointRotation = rotation;
+        hasCheckpoint = true;
     }
 
     public void RespawnCarServer()
@@ -35,11 +49,6 @@ public class CarRespawn : NetworkBehaviour
         Vector3 spawnPos = lastCheckpointPosition;
         Quaternion spawnRot = lastCheckpointRotation;
 
-        if (!hasCheckpoint && PlayerSpawner.Instance != null)
-        {
-            spawnPos = PlayerSpawner.Instance.GetSpawnPosition((int)OwnerClientId, out spawnRot);
-        }
-
         RespawnClientRpc(spawnPos, spawnRot);
 
         if (healthComp != null)
@@ -48,16 +57,31 @@ public class CarRespawn : NetworkBehaviour
         }
     }
 
-    [ClientRpc]
-    private void RespawnClientRpc(Vector3 position, Quaternion rotation)
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void RespawnClientRpc(Vector3 position, Quaternion rotation)
     {
-        transform.SetPositionAndRotation(position, rotation);
-
-        if (rb != null)
+        if (IsOwner || IsLocalPlayer)
         {
-            rb.linearVelocity = Vector2.zero;
-            rb.angularVelocity = 0f;
+            NetworkTransform netTransform = GetComponent<NetworkTransform>();
+            if (netTransform != null && netTransform.CanCommitToTransform)
+            {
+                netTransform.Teleport(position, rotation, transform.localScale);
+            }
+            else
+            {
+                transform.SetPositionAndRotation(position, rotation);
+            }
+
+            if (rb != null)
+            {
+                rb.position = position;
+                rb.rotation = rotation.eulerAngles.z;
+                rb.linearVelocity = Vector2.zero;
+                rb.angularVelocity = 0f;
+            }
         }
+
+        NetworkCarController.UpdateAllCarsSceneVisibility();
     }
 }
 

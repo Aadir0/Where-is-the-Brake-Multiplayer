@@ -196,17 +196,17 @@ public class LobbyUI : MonoBehaviour
             float vertical = 0f;
             float horizontal = 0f;
 
-            // 1. Keyboard WASD + Arrow Keys
+            // 1. Keyboard Arrow Keys ONLY (WASD disabled for UI navigation)
             if (Keyboard.current != null)
             {
-                if (Keyboard.current.upArrowKey.isPressed || Keyboard.current.wKey.isPressed) vertical = 1f;
-                else if (Keyboard.current.downArrowKey.isPressed || Keyboard.current.sKey.isPressed) vertical = -1f;
+                if (Keyboard.current.upArrowKey.isPressed) vertical = 1f;
+                else if (Keyboard.current.downArrowKey.isPressed) vertical = -1f;
 
-                if (Keyboard.current.leftArrowKey.isPressed || Keyboard.current.aKey.isPressed) horizontal = -1f;
-                else if (Keyboard.current.rightArrowKey.isPressed || Keyboard.current.dKey.isPressed) horizontal = 1f;
+                if (Keyboard.current.leftArrowKey.isPressed) horizontal = -1f;
+                else if (Keyboard.current.rightArrowKey.isPressed) horizontal = 1f;
             }
 
-            // 2. Gamepad D-Pad ONLY for controller UI button selection (Left Stick disabled for UI selection)
+            // 2. Gamepad D-Pad ONLY (Left Stick strictly disabled)
             Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
             if (gamepad != null)
             {
@@ -267,15 +267,22 @@ public class LobbyUI : MonoBehaviour
     {
         if (!enableScaleAnimation || activeLobbyButtons.Count == 0) return;
 
+        float rotZ = Mathf.Sin(Time.unscaledTime * 4.0f) * 2.0f;
+
         for (int i = 0; i < activeLobbyButtons.Count; i++)
         {
             Button btn = activeLobbyButtons[i];
             if (btn == null || !btn.gameObject.activeInHierarchy) continue;
 
             Vector3 baseScale = originalScales.ContainsKey(btn.transform) ? originalScales[btn.transform] : Vector3.one;
-            Vector3 targetScale = (i == selectedLobbyIndex) ? Vector3.Scale(baseScale, selectedScale) : Vector3.Scale(baseScale, unselectedScale);
+            bool isSelected = (i == selectedLobbyIndex);
+            Vector3 targetScale = isSelected ? Vector3.Scale(baseScale, selectedScale) : Vector3.Scale(baseScale, unselectedScale);
 
             btn.transform.localScale = Vector3.Lerp(btn.transform.localScale, targetScale, scaleSpeed * Time.unscaledDeltaTime);
+
+            btn.transform.localRotation = isSelected
+                ? Quaternion.Euler(0f, 0f, rotZ)
+                : Quaternion.Lerp(btn.transform.localRotation, Quaternion.identity, 10f * Time.unscaledDeltaTime);
         }
     }
 
@@ -360,21 +367,16 @@ public class LobbyUI : MonoBehaviour
 
     private void OnCreateRoomClicked()
     {
-        if (SceneTransitionManager.Instance != null)
-        {
-            SceneTransitionManager.Instance.TriggerTransition(() =>
-            {
-                ExecuteCreateRoom();
-            });
-        }
-        else
-        {
-            ExecuteCreateRoom();
-        }
+        ExecuteCreateRoom();
     }
 
     private async void ExecuteCreateRoom()
     {
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.ShowTransitionCover();
+        }
+
         if (mainMenuPanel != null) mainMenuPanel.SetActive(false);
         if (lobbyPanel != null) lobbyPanel.SetActive(true);
         UpdateStatusText("Creating Room...");
@@ -382,6 +384,10 @@ public class LobbyUI : MonoBehaviour
         if (RelayManager.Instance == null)
         {
             UpdateStatusText("RelayManager instance not found!");
+            if (SceneTransitionManager.Instance != null)
+            {
+                SceneTransitionManager.Instance.HideTransitionCover();
+            }
             return;
         }
 
@@ -395,6 +401,11 @@ public class LobbyUI : MonoBehaviour
             ShowHostLobbyUI(code);
             RegisterMessagingHandlers();
             BroadcastPlayerCountServer();
+        }
+
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.HideTransitionCover();
         }
     }
 
@@ -612,7 +623,7 @@ public class LobbyUI : MonoBehaviour
     private void OnClientDisconnected(ulong clientId)
     {
         NetworkManager networkManager = NetworkManager.Singleton;
-        if (networkManager == null)
+        if (networkManager == null || !networkManager.IsListening)
         {
             return;
         }
@@ -663,16 +674,26 @@ public class LobbyUI : MonoBehaviour
 
     private void BroadcastPlayerCountServer()
     {
-        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsHost) return;
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsHost || !NetworkManager.Singleton.IsListening || NetworkManager.Singleton.CustomMessagingManager == null) return;
 
-        int count = NetworkManager.Singleton.ConnectedClientsList.Count;
-        UpdatePlayerCountDisplay(count);
-
-        FastBufferWriter writer = new FastBufferWriter(FastBufferWriter.GetWriteSize<int>(), Allocator.Temp);
-        using (writer)
+        try
         {
-            writer.WriteValueSafe(count);
-            NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll(PLAYER_COUNT_MSG, writer);
+            int count = NetworkManager.Singleton.ConnectedClientsList != null ? NetworkManager.Singleton.ConnectedClientsList.Count : 0;
+            UpdatePlayerCountDisplay(count);
+
+            FastBufferWriter writer = new FastBufferWriter(FastBufferWriter.GetWriteSize<int>(), Allocator.Temp);
+            using (writer)
+            {
+                writer.WriteValueSafe(count);
+                if (NetworkManager.Singleton.CustomMessagingManager != null)
+                {
+                    NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll(PLAYER_COUNT_MSG, writer);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[LobbyUI] BroadcastPlayerCountServer exception: {ex.Message}");
         }
     }
 

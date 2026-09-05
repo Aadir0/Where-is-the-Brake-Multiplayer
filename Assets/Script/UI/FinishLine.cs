@@ -14,29 +14,31 @@ public class FinishLine : MonoBehaviour
     [SerializeField] private GameObject timeIsLessPanel;
     [SerializeField] private InputAction resetAction;
 
+    [Header("Dynamic Win Prompt Text UI (Inspector References)")]
+    [SerializeField] private TextMeshProUGUI winPromptTMP;
+    [SerializeField] private Text winPromptLegacyText;
+
     [Header("Winning Stats Scale & Wobble Animation")]
     [SerializeField] private float statsPulseSpeed = 3.5f;
     [SerializeField] private float statsPulseAmount = 0.12f;
     [SerializeField] private float statsWobbleSpeed = 5.0f;
     [SerializeField] private float statsWobbleAngle = 4.0f;
 
-    private bool hasWon;
-    private bool isLocalPlayerReady;
-    private bool isSpectating;
+    public static bool LocalPlayerHasWon { get; private set; } = false;
+
+    private bool hasWon = false;
+    private bool isTransitioningNext = false;
     private Transform localPlayerTransform;
-    private Transform otherPlayerTransform;
 
     private readonly List<Transform> statsAnimTransforms = new List<Transform>();
     private readonly Dictionary<Transform, Vector3> statsInitialScales = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Transform, Quaternion> statsInitialRotations = new Dictionary<Transform, Quaternion>();
 
-    private bool IsSinglePlayer => NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening || NetworkManager.Singleton.ConnectedClientsIds.Count <= 1;
-
     private void Start()
     {
         hasWon = false;
-        isLocalPlayerReady = false;
-        isSpectating = false;
+        LocalPlayerHasWon = false;
+        isTransitioningNext = false;
 
         GameObject winUI = GetWinPanelInScene();
         if (winUI != null) winUI.SetActive(false);
@@ -50,108 +52,55 @@ public class FinishLine : MonoBehaviour
     private void OnEnable()
     {
         resetAction.Enable();
-
-        if (NetworkRaceManager.Instance != null)
-        {
-            NetworkRaceManager.Instance.OnReadyPlayerCountChanged += OnReadyPlayerCountChanged;
-            NetworkRaceManager.Instance.OnBothPlayersFinished += OnBothPlayersFinished;
-            NetworkRaceManager.Instance.OnPlayerTimeIsLess += OnPlayerTimeIsLess;
-        }
     }
 
     private void OnDisable()
     {
         resetAction.Disable();
 
-        if (NetworkRaceManager.Instance != null)
+        if (!hasWon && LeaderboardManager.Instance != null)
         {
-            NetworkRaceManager.Instance.OnReadyPlayerCountChanged -= OnReadyPlayerCountChanged;
-            NetworkRaceManager.Instance.OnBothPlayersFinished -= OnBothPlayersFinished;
-            NetworkRaceManager.Instance.OnPlayerTimeIsLess -= OnPlayerTimeIsLess;
+            string sceneName = SceneManager.GetActiveScene().name;
+            if (!sceneName.Equals("Ending", StringComparison.OrdinalIgnoreCase) && !sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+            {
+                bool isRecorded = false;
+                if (LeaderboardManager.Instance.LevelStats != null)
+                {
+                    foreach (var stat in LeaderboardManager.Instance.LevelStats)
+                    {
+                        if (string.Equals(stat.levelName, sceneName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            isRecorded = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!isRecorded)
+                {
+                    float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetCurrentLevelElapsedTime() : 40f;
+                    int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
+                    LeaderboardManager.Instance.RecordLevelCompletion(sceneName, elapsedTime, deaths, isTimeout: true);
+                }
+            }
         }
     }
 
     private void Update()
     {
-        if (hasWon)
+        if (hasWon && !isTransitioningNext)
         {
             AnimateWinStatsUI();
 
-            // 1. Singleplayer: Press R / ButtonSouth to proceed directly to next level
-            if (IsSinglePlayer)
+            Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+
+            bool proceedPressed = (Keyboard.current != null && (Keyboard.current.rKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.spaceKey.wasPressedThisFrame)) ||
+                                 (gamepad != null && gamepad.buttonSouth.wasPressedThisFrame) ||
+                                 resetAction.WasPressedThisFrame();
+
+            if (proceedPressed)
             {
-                bool proceedPressed = (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame) ||
-                                     (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame) ||
-                                     resetAction.WasPressedThisFrame();
-
-                if (proceedPressed)
-                {
-                    LoadNextLevelLocal();
-                }
-            }
-            else
-            {
-                // 2. Multiplayer: Ready / Spectate Toggle via P key or Gamepad button
-                bool spectatePressed = (Keyboard.current != null && Keyboard.current.pKey.wasPressedThisFrame);
-                if (spectatePressed)
-                {
-                    ToggleSpectateMode();
-                }
-
-                if (!isLocalPlayerReady)
-                {
-                    bool readyPressed = (Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame) ||
-                                       (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame) ||
-                                       resetAction.WasPressedThisFrame();
-
-                    if (readyPressed)
-                    {
-                        isLocalPlayerReady = true;
-                        if (NetworkRaceManager.Instance != null && NetworkManager.Singleton != null)
-                        {
-                            NetworkRaceManager.Instance.RequestSetReadyServerRpc(NetworkManager.Singleton.LocalClientId);
-                        }
-                        UpdateReadyPromptText("READY! WAITING FOR OTHERS...");
-                    }
-                }
-            }
-        }
-    }
-
-    private void ToggleSpectateMode()
-    {
-        if (CameraFollow.Instance == null) return;
-
-        if (otherPlayerTransform == null)
-        {
-            FindOtherPlayerTransform();
-        }
-
-        if (otherPlayerTransform != null)
-        {
-            isSpectating = !isSpectating;
-            if (isSpectating)
-            {
-                CameraFollow.Instance.SetTarget(otherPlayerTransform);
-                UpdateReadyPromptText("SPECTATING OTHER PLAYER... PRESS 'P' OR [A] BUTTON TO RETURN");
-            }
-            else
-            {
-                CameraFollow.Instance.SetTarget(localPlayerTransform);
-                UpdateReadyPromptText(IsSinglePlayer ? "PRESS 'R' OR [A] BUTTON TO LOAD NEXT LEVEL!" : "PRESS 'P' OR [A] BUTTON TO SPECTATE OTHER PLAYER!");
-            }
-        }
-    }
-
-    private void FindOtherPlayerTransform()
-    {
-        GameObject[] players = GameObject.FindGameObjectsWithTag("Player");
-        foreach (GameObject p in players)
-        {
-            if (p.transform != localPlayerTransform)
-            {
-                otherPlayerTransform = p.transform;
-                break;
+                LoadNextLevelLocal();
             }
         }
     }
@@ -175,95 +124,102 @@ public class FinishLine : MonoBehaviour
         }
     }
 
-    private void OnReadyPlayerCountChanged(int readyCount, int totalCount)
-    {
-        if (hasWon && !IsSinglePlayer)
-        {
-            if (isLocalPlayerReady)
-            {
-                UpdateReadyPromptText($"READY! WAITING FOR OTHERS ({readyCount}/{totalCount})...");
-            }
-            else
-            {
-                UpdateReadyPromptText("PRESS 'P' OR [A] BUTTON TO SPECTATE OTHER PLAYER!");
-            }
-        }
-    }
-
-    private void OnBothPlayersFinished()
-    {
-    }
-
-    private void OnPlayerTimeIsLess(ulong clientId)
-    {
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.LocalClientId == clientId && !hasWon)
-        {
-            float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetElapsedTime() : 300f;
-            CarHealth healthComp = localPlayerTransform != null ? localPlayerTransform.GetComponent<CarHealth>() : null;
-            int deaths = healthComp != null ? healthComp.deathCount.Value : 0;
-
-            ShowTimeIsLessPanelLocal(elapsedTime, deaths);
-        }
-    }
-
     private void OnTriggerEnter2D(Collider2D col)
     {
-        if (col.CompareTag("Player"))
+        NetworkObject netObj = col.GetComponentInParent<NetworkObject>();
+        NetworkCarController carCtrl = col.GetComponentInParent<NetworkCarController>();
+        CarHealth healthComp = col.GetComponentInParent<CarHealth>();
+
+        if (col.CompareTag("Player") || (col.transform.root != null && col.transform.root.CompareTag("Player")) || carCtrl != null)
         {
-            NetworkObject netObj = col.GetComponent<NetworkObject>();
-            NetworkCarController carCtrl = col.GetComponent<NetworkCarController>();
-            CarHealth healthComp = col.GetComponent<CarHealth>();
+            bool isLocalCar = (netObj != null && netObj.IsOwner) || (netObj == null);
+            if (!isLocalCar) return;
 
             if (carCtrl != null)
             {
-                carCtrl.SetCarWonRpc();
-            }
-
-            int deaths = healthComp != null ? healthComp.deathCount.Value : 0;
-            float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetElapsedTime() : 0f;
-
-            if (netObj != null)
-            {
-                if (NetworkRaceManager.Instance != null)
+                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && carCtrl.IsSpawned)
                 {
-                    NetworkRaceManager.Instance.RequestPlayerCrossedFinishServerRpc(netObj.OwnerClientId);
+                    carCtrl.SetCarWonRpc();
                 }
-
-                if (netObj.IsOwner && !hasWon)
+                else
                 {
-                    TriggerWinLocal(col.transform, elapsedTime, deaths);
+                    carCtrl.SetCarWonLocal();
                 }
             }
-            else if (!hasWon)
+
+            int deaths = healthComp != null ? healthComp.deathCount.Value : (CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0);
+            float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetCurrentLevelElapsedTime() : 0f;
+            Transform playerT = carCtrl != null ? carCtrl.transform : (netObj != null ? netObj.transform : col.transform.root);
+
+            if (!hasWon)
             {
-                TriggerWinLocal(col.transform, elapsedTime, deaths);
+                if (LevelTimer.Instance != null)
+                {
+                    LevelTimer.Instance.StopLocalTimerForPlayer(elapsedTime);
+                }
+                TriggerWinLocal(playerT, elapsedTime, deaths);
+
+                string currentScene = SceneManager.GetActiveScene().name;
+                string nextScene = GetNextSceneName(currentScene);
+                if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
+                {
+                    ulong localId = (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening) ? NetworkManager.Singleton.LocalClientId : 0;
+                    if (carCtrl != null && carCtrl.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                    {
+                        carCtrl.NotifyMatchEndedRpc(localId);
+                    }
+                    if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+                    {
+                        NetworkRaceManager.Instance.NotifyMatchEndedRpc(localId);
+                    }
+                }
             }
         }
     }
 
     public GameObject GetWinPanelInScene()
     {
-        if (winPanel != null) return winPanel;
+        if (winPanel != null && winPanel.scene.isLoaded) return winPanel;
 
         foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
         {
-            if (go.scene.isLoaded && (go.CompareTag("Win") || go.name.Equals("WinPanel", StringComparison.OrdinalIgnoreCase)))
+            if (go.scene.isLoaded &&
+                (go.CompareTag("Winning") ||
+                 go.CompareTag("Win") ||
+                 go.name.Equals("WinningScene", StringComparison.OrdinalIgnoreCase) ||
+                 go.name.Equals("WinPanel", StringComparison.OrdinalIgnoreCase)))
             {
+                winPanel = go;
                 return go;
             }
         }
 
-        return GameObject.FindGameObjectWithTag("Win");
+        GameObject tagged = GameObject.FindGameObjectWithTag("Winning");
+        if (tagged != null)
+        {
+            winPanel = tagged;
+            return tagged;
+        }
+
+        tagged = GameObject.FindGameObjectWithTag("Win");
+        if (tagged != null)
+        {
+            winPanel = tagged;
+            return tagged;
+        }
+
+        return null;
     }
 
     public GameObject GetTimeIsLessPanelInScene()
     {
-        if (timeIsLessPanel != null) return timeIsLessPanel;
+        if (timeIsLessPanel != null && timeIsLessPanel.scene.isLoaded) return timeIsLessPanel;
 
         foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
         {
             if (go.scene.isLoaded && (go.CompareTag("TimeIsLess") || go.name.Equals("TimeIsLessPanel", StringComparison.OrdinalIgnoreCase) || go.name.Contains("TimeIsLess", StringComparison.OrdinalIgnoreCase)))
             {
+                timeIsLessPanel = go;
                 return go;
             }
         }
@@ -274,7 +230,8 @@ public class FinishLine : MonoBehaviour
     private void TriggerWinLocal(Transform winnerTransform, float elapsedTimeSeconds, int deaths)
     {
         hasWon = true;
-        isLocalPlayerReady = false;
+        LocalPlayerHasWon = true;
+        isTransitioningNext = false;
         localPlayerTransform = winnerTransform;
 
         if (LeaderboardManager.Instance != null)
@@ -293,16 +250,28 @@ public class FinishLine : MonoBehaviour
         {
             winUI.SetActive(true);
             PopulateWinStatsUI(winUI, elapsedTimeSeconds, deaths);
+            UpdateReadyPromptText("PRESS 'R' OR [A] BUTTON TO LOAD NEXT LEVEL!");
 
-            if (IsSinglePlayer)
+            Button nextBtn = winUI.GetComponentInChildren<Button>(true);
+            if (nextBtn != null)
             {
-                UpdateReadyPromptText("PRESS 'R' OR [A] BUTTON TO LOAD NEXT LEVEL!");
-            }
-            else
-            {
-                UpdateReadyPromptText("PRESS 'P' OR [A] BUTTON TO SPECTATE OTHER PLAYER!");
+                nextBtn.onClick.RemoveAllListeners();
+                nextBtn.onClick.AddListener(LoadNextLevelLocal);
             }
         }
+
+        string currentScene = SceneManager.GetActiveScene().name;
+        string nextScene = GetNextSceneName(currentScene);
+        if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
+        {
+            StartCoroutine(DelayedAutoLoadEndingRoutine(2.5f));
+        }
+    }
+
+    private IEnumerator DelayedAutoLoadEndingRoutine(float delay = 2.5f)
+    {
+        yield return new WaitForSeconds(delay);
+        LoadNextLevelLocal();
     }
 
     public void ShowTimeIsLessPanelLocal(float elapsedTimeSeconds, int deaths)
@@ -316,7 +285,7 @@ public class FinishLine : MonoBehaviour
 
         if (LeaderboardManager.Instance != null)
         {
-            LeaderboardManager.Instance.RecordLevelCompletion(SceneManager.GetActiveScene().name, elapsedTimeSeconds, deaths);
+            LeaderboardManager.Instance.RecordLevelCompletion(SceneManager.GetActiveScene().name, elapsedTimeSeconds, deaths, isTimeout: true);
         }
     }
 
@@ -375,6 +344,16 @@ public class FinishLine : MonoBehaviour
 
     private void UpdateReadyPromptText(string promptText)
     {
+        if (winPromptTMP != null)
+        {
+            winPromptTMP.text = promptText;
+        }
+
+        if (winPromptLegacyText != null)
+        {
+            winPromptLegacyText.text = promptText;
+        }
+
         GameObject winUI = GetWinPanelInScene();
         if (winUI == null) return;
 
@@ -382,7 +361,10 @@ public class FinishLine : MonoBehaviour
         foreach (var txt in textComponents)
         {
             string objName = txt.gameObject.name.ToLower();
-            if (objName.Contains("ready") || objName.Contains("prompt") || objName.Contains("info") || objName.Contains("next"))
+            if (objName.Contains("ready") || objName.Contains("prompt") || objName.Contains("info") ||
+                objName.Contains("next") || objName.Contains("sub") ||
+                objName.Contains("guide") || objName.Contains("hint") || objName.Contains("continue") ||
+                objName.Contains("desc"))
             {
                 txt.text = promptText;
             }
@@ -392,23 +374,62 @@ public class FinishLine : MonoBehaviour
         foreach (var txt in legacyTexts)
         {
             string objName = txt.gameObject.name.ToLower();
-            if (objName.Contains("ready") || objName.Contains("prompt") || objName.Contains("info") || objName.Contains("next"))
+            if (objName.Contains("ready") || objName.Contains("prompt") || objName.Contains("info") ||
+                objName.Contains("next") || objName.Contains("sub") ||
+                objName.Contains("guide") || objName.Contains("hint") || objName.Contains("continue") ||
+                objName.Contains("desc"))
             {
                 txt.text = promptText;
             }
         }
     }
 
-    private void LoadNextLevelLocal()
+    public void LoadNextLevelLocal()
     {
-        int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
-        if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
+        if (isTransitioningNext) return;
+        isTransitioningNext = true;
+        StopAllCoroutines();
+
+        string currentScene = SceneManager.GetActiveScene().name;
+        string nextScene = GetNextSceneName(currentScene);
+
+        // If reaching Ending in multiplayer, notify other clients
+        if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
         {
-            SceneManager.LoadScene(nextSceneIndex);
+            ulong localId = (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening) ? NetworkManager.Singleton.LocalClientId : 0;
+            if (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                NetworkCarController.LocalPlayerInstance.NotifyMatchEndedRpc(localId);
+            }
+            if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                NetworkRaceManager.Instance.NotifyMatchEndedRpc(localId);
+            }
+        }
+
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.LoadSceneWithTransition(nextScene);
         }
         else
         {
-            SceneManager.LoadScene("Ending");
+            SceneManager.LoadScene(nextScene);
         }
+    }
+
+    private string GetNextSceneName(string currentSceneName)
+    {
+        if (currentSceneName.Equals("Level 1", StringComparison.OrdinalIgnoreCase)) return "Level 2";
+        if (currentSceneName.Equals("Level 2", StringComparison.OrdinalIgnoreCase)) return "Level 3";
+        if (currentSceneName.Equals("Level 3", StringComparison.OrdinalIgnoreCase)) return "Level 4";
+        if (currentSceneName.Equals("Level 4", StringComparison.OrdinalIgnoreCase)) return "Ending";
+
+        int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
+        if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
+        {
+            string scenePath = SceneUtility.GetScenePathByBuildIndex(nextSceneIndex);
+            return System.IO.Path.GetFileNameWithoutExtension(scenePath);
+        }
+        return "Ending";
     }
 }

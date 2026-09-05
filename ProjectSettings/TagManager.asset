@@ -17,6 +17,8 @@ TagManager:
   - Timer
   - TimeOver
   - TimeIsLess
+  - Flower
+  - Confiner
   layers:
   - Default
   - TransparentFX

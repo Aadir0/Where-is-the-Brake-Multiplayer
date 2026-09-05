@@ -57,8 +57,16 @@ public class ShadowJump : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (!active || target == null)
+        if (!active || target == null || !target.gameObject.activeInHierarchy)
         {
+            DisableShadow();
+            return;
+        }
+
+        Renderer r = target.GetComponent<Renderer>();
+        if (r != null && !r.enabled)
+        {
+            DisableShadow();
             return;
         }
 

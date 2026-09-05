@@ -98,10 +98,11 @@ public class SceneTransitionManager : MonoBehaviour
         circleTransform = null;
         LocateCirclePanel();
 
+        StopAllCoroutines();
+        isTransitioning = false;
+
         if (circleTransitionPanel != null && circleTransitionPanel != gameObject)
         {
-            StopAllCoroutines();
-            isTransitioning = false;
             StartCoroutine(AnimateCircleInRoutine());
         }
     }
@@ -126,6 +127,38 @@ public class SceneTransitionManager : MonoBehaviour
         StartCoroutine(TransitionRoutine(onFullyCovered));
     }
 
+    public void ShowTransitionCover()
+    {
+        LocateCirclePanel();
+        if (circleTransitionPanel == null || circleTransitionPanel == gameObject) return;
+
+        StopAllCoroutines();
+        isTransitioning = true;
+        circleTransitionPanel.SetActive(true);
+        if (circleTransform == null) circleTransform = circleTransitionPanel.GetComponent<RectTransform>();
+
+        if (circleTransform != null)
+        {
+            circleTransform.SetAsLastSibling();
+            circleTransform.anchoredPosition3D = Vector3.zero;
+            circleTransform.localScale = maxCircleScale;
+        }
+    }
+
+    public void HideTransitionCover()
+    {
+        LocateCirclePanel();
+        if (circleTransitionPanel == null || circleTransitionPanel == gameObject)
+        {
+            isTransitioning = false;
+            return;
+        }
+
+        StopAllCoroutines();
+        isTransitioning = false;
+        StartCoroutine(AnimateCircleInRoutine());
+    }
+
     public void LoadSceneWithTransition(string sceneName)
     {
         TriggerTransition(() =>
@@ -134,7 +167,7 @@ public class SceneTransitionManager : MonoBehaviour
         });
     }
 
-    // Phase 1: Circle Scales UP from 0 to Full Screen Coverage
+    // Phase 1: Enable transition panel for duration
     public IEnumerator AnimateCircleOutRoutine()
     {
         LocateCirclePanel();
@@ -147,27 +180,13 @@ public class SceneTransitionManager : MonoBehaviour
         {
             circleTransform.SetAsLastSibling();
             circleTransform.anchoredPosition3D = Vector3.zero;
-            circleTransform.localScale = Vector3.zero;
+            circleTransform.localScale = maxCircleScale;
         }
 
-        float elapsed = 0f;
-        while (elapsed < transitionDuration)
-        {
-            elapsed += Time.unscaledDeltaTime;
-            float t = Mathf.Clamp01(elapsed / transitionDuration);
-            float easeT = Mathf.Sin(t * Mathf.PI * 0.5f);
-
-            if (circleTransform != null)
-            {
-                circleTransform.localScale = Vector3.Lerp(Vector3.zero, maxCircleScale, easeT);
-            }
-            yield return null;
-        }
-
-        if (circleTransform != null) circleTransform.localScale = maxCircleScale;
+        yield return new WaitForSecondsRealtime(transitionDuration);
     }
 
-    // Phase 2: Circle Scales DOWN from Full Screen Coverage to 0 and disables
+    // Phase 2: Keep transition panel enabled for duration, then disable
     public IEnumerator AnimateCircleInRoutine()
     {
         LocateCirclePanel();
@@ -183,21 +202,8 @@ public class SceneTransitionManager : MonoBehaviour
             circleTransform.localScale = maxCircleScale;
         }
 
-        float elapsed = 0f;
-        while (elapsed < transitionDuration)
-        {
-            elapsed += Time.unscaledDeltaTime;
-            float t = Mathf.Clamp01(elapsed / transitionDuration);
-            float easeT = 1f - Mathf.Cos(t * Mathf.PI * 0.5f);
+        yield return new WaitForSecondsRealtime(transitionDuration);
 
-            if (circleTransform != null)
-            {
-                circleTransform.localScale = Vector3.Lerp(maxCircleScale, Vector3.zero, easeT);
-            }
-            yield return null;
-        }
-
-        if (circleTransform != null) circleTransform.localScale = Vector3.zero;
         circleTransitionPanel.SetActive(false);
     }
 

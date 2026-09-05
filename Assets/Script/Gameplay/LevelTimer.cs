@@ -34,6 +34,9 @@ public class LevelTimer : NetworkBehaviour
 
     private bool timerRunning = false;
     private float localRunStartTime = 0f;
+    private float currentLevelStartTime = 0f;
+    private bool isLocalPlayerFinishedLevel = false;
+    private float frozenLocalLevelTime = 0f;
     private float offlineTimeRemaining = 300f;
     private bool offlineIsTimeOver = false;
     private bool hasInitializedRun = false;
@@ -58,6 +61,9 @@ public class LevelTimer : NetworkBehaviour
         DontDestroyOnLoad(gameObject);
 
         localRunStartTime = Time.time;
+        currentLevelStartTime = Time.time;
+        isLocalPlayerFinishedLevel = false;
+        frozenLocalLevelTime = 0f;
         offlineTimeRemaining = overallRunDurationSeconds;
         offlineIsTimeOver = false;
     }
@@ -90,6 +96,9 @@ public class LevelTimer : NetworkBehaviour
     public void ResetRunTimer()
     {
         localRunStartTime = Time.time;
+        currentLevelStartTime = Time.time;
+        isLocalPlayerFinishedLevel = false;
+        frozenLocalLevelTime = 0f;
         offlineTimeRemaining = overallRunDurationSeconds;
         offlineIsTimeOver = false;
         hasInitializedRun = true;
@@ -104,6 +113,10 @@ public class LevelTimer : NetworkBehaviour
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        currentLevelStartTime = Time.time;
+        isLocalPlayerFinishedLevel = false;
+        frozenLocalLevelTime = 0f;
+
         FindOrSetupUIReferences();
         CheckSceneTimerState(scene.name);
     }
@@ -137,6 +150,7 @@ public class LevelTimer : NetworkBehaviour
         {
             timerRunning = false;
             hasInitializedRun = false;
+            isLocalPlayerFinishedLevel = false;
             offlineTimeRemaining = overallRunDurationSeconds;
             offlineIsTimeOver = false;
         }
@@ -156,6 +170,8 @@ public class LevelTimer : NetworkBehaviour
         else
         {
             timerRunning = true;
+            currentLevelStartTime = Time.time;
+            isLocalPlayerFinishedLevel = false;
         }
     }
 
@@ -168,20 +184,31 @@ public class LevelTimer : NetworkBehaviour
         return offlineTimeRemaining;
     }
 
+    public float GetCurrentLevelElapsedTime()
+    {
+        if (isLocalPlayerFinishedLevel)
+        {
+            return Mathf.Max(0.1f, frozenLocalLevelTime);
+        }
+        return Mathf.Max(0.1f, Time.time - currentLevelStartTime);
+    }
+
+    public void StopLocalTimerForPlayer(float finalLevelTime = -1f)
+    {
+        isLocalPlayerFinishedLevel = true;
+        frozenLocalLevelTime = (finalLevelTime > 0f) ? finalLevelTime : (Time.time - currentLevelStartTime);
+    }
+
     public float GetElapsedTime()
     {
-        float remaining = GetRemainingTime();
-        float elapsed = overallRunDurationSeconds - remaining;
-        if (elapsed <= 0.05f)
-        {
-            elapsed = Time.time - localRunStartTime;
-        }
-        return Mathf.Max(0.1f, elapsed);
+        return GetCurrentLevelElapsedTime();
     }
 
     public void StartTimerServer()
     {
         timerRunning = true;
+        currentLevelStartTime = Time.time;
+        isLocalPlayerFinishedLevel = false;
         if (!hasInitializedRun)
         {
             ResetRunTimer();
@@ -231,58 +258,88 @@ public class LevelTimer : NetworkBehaviour
         }
 
         UpdateTimerDisplay(GetRemainingTime());
+
+        if (IsTimeOver && mainMenuButton != null && mainMenuButton.gameObject.activeInHierarchy)
+        {
+            float rotZ = Mathf.Sin(Time.unscaledTime * 4.0f) * 2.0f;
+            mainMenuButton.transform.localRotation = Quaternion.Euler(0f, 0f, rotZ);
+
+            bool submitPressed = false;
+            if (UnityEngine.InputSystem.Keyboard.current != null && (UnityEngine.InputSystem.Keyboard.current.enterKey.wasPressedThisFrame || UnityEngine.InputSystem.Keyboard.current.spaceKey.wasPressedThisFrame)) submitPressed = true;
+            if (UnityEngine.InputSystem.Gamepad.current != null && UnityEngine.InputSystem.Gamepad.current.buttonSouth.wasPressedThisFrame) submitPressed = true;
+            if (submitPressed && mainMenuButton.interactable)
+            {
+                OnMainMenuButtonClicked();
+            }
+        }
+    }
+
+    public void TriggerTimeOverFromMatchEnd()
+    {
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) ||
+            activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // Do not trigger TimeOver if this player has won
+        if (FinishLine.LocalPlayerHasWon || (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.hasWonPlayer))
+        {
+            return;
+        }
+
+        timerRunning = false;
+        offlineIsTimeOver = true;
+
+        if (LeaderboardManager.Instance != null)
+        {
+            float elapsedTime = GetCurrentLevelElapsedTime();
+            int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
+            LeaderboardManager.Instance.RecordLevelCompletion(activeScene, elapsedTime, deaths, isTimeout: true);
+            LeaderboardManager.Instance.EnsureAllLevelsRecorded();
+        }
+
+        ShowTimeOverUI();
+        StartCoroutine(DelayedSwitchToEndingRoutine(2.5f));
     }
 
     private void HandleTimerExpiration()
     {
-        ShowTimeOverUI();
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) || activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
 
         if (LeaderboardManager.Instance != null)
         {
-            string currentScene = SceneManager.GetActiveScene().name;
-            if (!currentScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) && !currentScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
-            {
-                LeaderboardManager.Instance.RecordLevelCompletion(currentScene, overallRunDurationSeconds, 0);
-            }
+            float elapsedTime = GetCurrentLevelElapsedTime();
+            int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
+            LeaderboardManager.Instance.RecordLevelCompletion(activeScene, elapsedTime, deaths, isTimeout: true);
+            LeaderboardManager.Instance.EnsureAllLevelsRecorded();
         }
 
-        string activeScene = SceneManager.GetActiveScene().name;
-        if (!activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) && !activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
-        {
-            StartCoroutine(DelayedLoadEndingRoutine());
-        }
+        ShowTimeOverUI();
+        StartCoroutine(DelayedSwitchToEndingRoutine(2.5f));
     }
 
-    private IEnumerator DelayedLoadEndingRoutine()
+    private IEnumerator DelayedSwitchToEndingRoutine(float delay = 2.5f)
     {
-        yield return new WaitForSeconds(2.5f);
+        yield return new WaitForSeconds(delay);
 
-        Action loadEndingAction = () =>
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (!activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
+            !activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && IsServer)
+            if (SceneTransitionManager.Instance != null)
             {
-                if (NetworkManager.Singleton.SceneManager != null)
-                {
-                    NetworkManager.Singleton.SceneManager.LoadScene("Ending", LoadSceneMode.Single);
-                }
-                else
-                {
-                    SceneManager.LoadScene("Ending");
-                }
+                SceneTransitionManager.Instance.LoadSceneWithTransition("Ending");
             }
-            else if (!IsNetworkActive)
+            else
             {
                 SceneManager.LoadScene("Ending");
             }
-        };
-
-        if (SceneTransitionManager.Instance != null)
-        {
-            SceneTransitionManager.Instance.TriggerTransition(loadEndingAction);
-        }
-        else
-        {
-            loadEndingAction.Invoke();
         }
     }
 
@@ -441,6 +498,7 @@ public class LevelTimer : NetworkBehaviour
 
     private void OnMainMenuButtonClicked()
     {
+        StopAllCoroutines();
         Time.timeScale = 1f;
 
         if (RelayManager.Instance != null)

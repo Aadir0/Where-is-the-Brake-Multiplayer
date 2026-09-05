@@ -38,15 +38,20 @@ public class CarHealth : NetworkBehaviour
     private Coroutine enableRestartCoroutine;
     private bool isOverlappingHole = false;
     private bool localDeathRequested = false;
-    private bool deathResponseApplied = false; // guards ApplyLocalDeathResponse so client-side prediction + the isDead sync don't double-apply visuals/UI/camera
+    private bool deathResponseApplied = false;
+    private float spawnGraceTimer = 0.6f;
 
     // Exposed so NetworkCarController can stop driving the car the INSTANT the owner locally detects
     // death, instead of waiting for the server's isDead NetworkVariable to round-trip back (that
     // round-trip is exactly what made the client car "keep going for a few seconds" after falling in).
     public bool LocalDeathRequested => localDeathRequested;
 
+    public static CarHealth LocalPlayerHealth { get; private set; }
+
     private void Awake()
     {
+        DontDestroyOnLoad(gameObject);
+        LocalPlayerHealth = this;
         rb = GetComponent<Rigidbody2D>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         carCollider = GetComponent<Collider2D>();
@@ -55,11 +60,15 @@ public class CarHealth : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        if (IsOwner)
+        {
+            LocalPlayerHealth = this;
+        }
+
         currentHealth.OnValueChanged += OnHealthChanged;
         isDead.OnValueChanged += OnDeadStateChanged;
 
-        localDeathRequested = false;
-        deathResponseApplied = false;
+        ResetLocalSpawnState();
 
         if (IsServer)
         {
@@ -71,6 +80,16 @@ public class CarHealth : NetworkBehaviour
         HideDeadUI();
     }
 
+    public void ResetLocalSpawnState()
+    {
+        localDeathRequested = false;
+        deathResponseApplied = false;
+        isOverlappingHole = false;
+        spawnGraceTimer = 0.6f;
+        HandleRespawnVisuals();
+        HideDeadUI();
+    }
+
     public override void OnNetworkDespawn()
     {
         currentHealth.OnValueChanged -= OnHealthChanged;
@@ -79,6 +98,18 @@ public class CarHealth : NetworkBehaviour
 
     private void Update()
     {
+        string activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) || activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (spawnGraceTimer > 0f)
+        {
+            spawnGraceTimer -= Time.deltaTime;
+            return;
+        }
+
         if (!IsOwner && !IsLocalPlayer) return;
         if (isDead.Value) return;
         if (localDeathRequested) return;
@@ -182,6 +213,24 @@ public class CarHealth : NetworkBehaviour
         }
     }
 
+    private void OnCollisionEnter2D(Collision2D collision)
+    {
+        if (IsHoleOrTrapObject(collision.gameObject))
+        {
+            isOverlappingHole = true;
+            CheckTrapOrHoleContact(collision.collider);
+        }
+    }
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        if (IsHoleOrTrapObject(collision.gameObject))
+        {
+            isOverlappingHole = true;
+            CheckTrapOrHoleContact(collision.collider);
+        }
+    }
+
     private void CheckTrapOrHoleContact(Collider2D other)
     {
         if (!IsOwner && !IsLocalPlayer) return;
@@ -197,7 +246,7 @@ public class CarHealth : NetworkBehaviour
         {
             localDeathRequested = true;
             RequestTakeDamageRpc(maxHealth);
-            PlayDeathEffectsRpc(transform.position);
+            PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
             ApplyLocalDeathResponse(); // client-side prediction: stop, hide & show UI NOW; do not wait for isDead to round-trip
         }
     }
@@ -294,14 +343,14 @@ public class CarHealth : NetworkBehaviour
                 localDeathRequested = true;
                 Debug.Log($"[CarHealth DANGER] Hole Layer detected after jump expired! Executing Death Sequence (IsOwner: {IsOwner})");
                 RequestTakeDamageRpc(maxHealth);
-                PlayDeathEffectsRpc(transform.position);
+                PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
                 ApplyLocalDeathResponse(); // client-side prediction: stop, hide & show UI NOW; do not wait for isDead to round-trip
             }
         }
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    private void RequestTakeDamageRpc(int amount)
+    public void RequestTakeDamageRpc(int amount)
     {
         TakeDamageServer(amount);
     }
@@ -325,9 +374,21 @@ public class CarHealth : NetworkBehaviour
         deathCount.Value++;
     }
 
-    [Rpc(SendTo.Everyone)]
-    private void PlayDeathEffectsRpc(Vector3 deathPosition)
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void PlayDeathEffectsRpc(Vector3 deathPosition, Unity.Collections.FixedString32Bytes deathSceneName)
     {
+        string localScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (!string.Equals(deathSceneName.ToString(), localScene, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (carController == null) carController = GetComponent<NetworkCarController>();
+        if (carController != null && !carController.IsInSameSceneAsLocalPlayer())
+        {
+            return;
+        }
+
         Vector3 finalSpawnPosition = deathPosition + deathPrefabOffset;
 
         if (smokeEffect != null)
@@ -369,8 +430,27 @@ public class CarHealth : NetworkBehaviour
         isDead.Value = false;
         isOverlappingHole = false;
         localDeathRequested = false;
-        if (carCollider != null) carCollider.enabled = true;
-        if (spriteRenderer != null) spriteRenderer.enabled = true;
+        deathResponseApplied = false;
+        spawnGraceTimer = 0.6f;
+
+        if (carController == null) carController = GetComponent<NetworkCarController>();
+        if (carController != null)
+        {
+            carController.UpdateVisibilityBasedOnScene();
+        }
+        else
+        {
+            if (carCollider != null) carCollider.enabled = true;
+            if (spriteRenderer != null) spriteRenderer.enabled = true;
+        }
+
+        ResetHealthAndStateClientRpc();
+    }
+
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void ResetHealthAndStateClientRpc()
+    {
+        ResetLocalSpawnState();
     }
 
     // Applies the LOCAL death response exactly once: stop & hide the car (HandleDeathVisuals) and show
@@ -419,8 +499,17 @@ public class CarHealth : NetworkBehaviour
     private void HandleRespawnVisuals()
     {
         isOverlappingHole = false;
-        if (carCollider != null) carCollider.enabled = true;
-        if (spriteRenderer != null) spriteRenderer.enabled = true;
+
+        if (carController == null) carController = GetComponent<NetworkCarController>();
+        if (carController != null)
+        {
+            carController.UpdateVisibilityBasedOnScene();
+        }
+        else
+        {
+            if (carCollider != null) carCollider.enabled = true;
+            if (spriteRenderer != null) spriteRenderer.enabled = true;
+        }
 
         if (IsOwner)
         {

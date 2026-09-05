@@ -137,6 +137,13 @@ public class NetworkCarController : NetworkBehaviour
         NetworkVariableWritePermission.Server
     );
 
+    // Networked scene name for independent level progression visibility
+    public NetworkVariable<Unity.Collections.FixedString32Bytes> currentSceneNet = new NetworkVariable<Unity.Collections.FixedString32Bytes>(
+        string.Empty,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+
     private Rigidbody2D rb;
     private SpriteRenderer spriteRenderer;
     private CapsuleCollider2D boxCollider;
@@ -146,12 +153,15 @@ public class NetworkCarController : NetworkBehaviour
     // Owner-authoritative physics state
     private bool isBoosted = false; // Represents whether car movement has started
     public bool hasWonPlayer { get; private set; } = false;
+    public static NetworkCarController LocalPlayerInstance { get; private set; }
 
     private InputAction MoveInput => moveAction != null ? moveAction.action : fallbackMoveAction;
     private InputAction JumpInput => JumpAction != null ? JumpAction.action : fallbackJumpAction;
 
     private void Awake()
     {
+        DontDestroyOnLoad(gameObject);
+        LocalPlayerInstance = this;
         rb = GetComponent<Rigidbody2D>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         boxCollider = GetComponent<CapsuleCollider2D>();
@@ -314,6 +324,7 @@ public class NetworkCarController : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        DontDestroyOnLoad(gameObject);
         canJump = false;
         isJumping = false;
         jumpStartTime = -100f;
@@ -321,13 +332,39 @@ public class NetworkCarController : NetworkBehaviour
         lastActionFrame = -1;
 
         ApplyLevelJumpSettings();
-        SetupStartPromptVisual();
+        // Disable player-to-player collision
+        Physics2D.IgnoreLayerCollision(playerLayer, playerLayer, true);
+        Physics2D.IgnoreLayerCollision(playerLayer, jumpCollisionLayer, true);
+        Physics2D.IgnoreLayerCollision(jumpCollisionLayer, jumpCollisionLayer, true);
+
+        if (boxCollider != null)
+        {
+            NetworkCarController[] allCars = UnityEngine.Object.FindObjectsByType<NetworkCarController>(FindObjectsSortMode.None);
+            foreach (var otherCar in allCars)
+            {
+                if (otherCar != this)
+                {
+                    Collider2D otherCol = otherCar.GetComponent<Collider2D>();
+                    if (otherCol != null)
+                    {
+                        Physics2D.IgnoreCollision(boxCollider, otherCol, true);
+                    }
+                }
+            }
+        }
 
         if (rb != null)
         {
-            rb.simulated = true;
-            rb.interpolation = RigidbodyInterpolation2D.Interpolate;
-            rb.bodyType = (IsOwner || IsLocalPlayer) ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
+            if (IsOwner || IsLocalPlayer)
+            {
+                rb.simulated = true;
+                rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+                rb.bodyType = RigidbodyType2D.Dynamic;
+            }
+            else
+            {
+                rb.simulated = false; // Prevents 2D physics from fighting NetworkTransform interpolation on remote cars
+            }
         }
 
         if (healthComp != null)
@@ -336,14 +373,21 @@ public class NetworkCarController : NetworkBehaviour
         }
 
         isHostCarNet.OnValueChanged += OnHostCarStateChanged;
+        currentSceneNet.OnValueChanged += OnCurrentSceneChanged;
 
         if (IsServer)
         {
             isHostCarNet.Value = (OwnerClientId == NetworkManager.ServerClientId);
+            currentSceneNet.Value = SceneManager.GetActiveScene().name;
+        }
+        else if (IsOwner && IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            UpdateCurrentSceneServerRpc(SceneManager.GetActiveScene().name);
         }
 
         ApplyCarVisuals(isHostCarNet.Value);
-        ResetCarBoostStateRpc();
+        ResetCarBoostStateLocal();
+        UpdateAllCarsSceneVisibility();
 
         if (IsOwner || IsLocalPlayer)
         {
@@ -351,6 +395,11 @@ public class NetworkCarController : NetworkBehaviour
             EnableInput(JumpInput);
 
             CameraFollow camFollow = Camera.main != null ? Camera.main.GetComponent<CameraFollow>() : null;
+            if (camFollow == null)
+            {
+                camFollow = UnityEngine.Object.FindFirstObjectByType<CameraFollow>();
+            }
+
             if (camFollow != null)
             {
                 camFollow.SetTarget(transform);
@@ -358,9 +407,179 @@ public class NetworkCarController : NetworkBehaviour
         }
     }
 
+    private void OnEnable()
+    {
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    private void OnDisable()
+    {
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (scene.name.Equals("Ending", StringComparison.OrdinalIgnoreCase) || scene.name.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            if (spriteRenderer != null) spriteRenderer.enabled = false;
+            Renderer[] allR = GetComponentsInChildren<Renderer>(true);
+            foreach (var r in allR) if (r != null) r.enabled = false;
+            Collider2D[] allC = GetComponentsInChildren<Collider2D>(true);
+            foreach (var c in allC) if (c != null) c.enabled = false;
+            StopCarAudio();
+            if (startPromptVisual != null) startPromptVisual.SetActive(false);
+            if (rb != null)
+            {
+                rb.simulated = false;
+                rb.linearVelocity = Vector2.zero;
+                rb.angularVelocity = 0f;
+            }
+            if ((IsOwner || IsLocalPlayer) && IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (IsServer)
+                {
+                    currentSceneNet.Value = scene.name;
+                }
+                else
+                {
+                    UpdateCurrentSceneServerRpc(scene.name);
+                }
+            }
+            return;
+        }
+
+        ResetCarBoostStateLocal();
+        ApplyLevelJumpSettings();
+
+        if (healthComp != null)
+        {
+            healthComp.ResetLocalSpawnState();
+        }
+
+        if (IsOwner || IsLocalPlayer)
+        {
+            EnableInput(MoveInput);
+            EnableInput(JumpInput);
+
+            if (IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                if (IsServer)
+                {
+                    currentSceneNet.Value = scene.name;
+                }
+                else
+                {
+                    UpdateCurrentSceneServerRpc(scene.name);
+                }
+            }
+
+            RepositionToSceneSpawnPoint();
+            StartCoroutine(DeferredRepositionRoutine());
+        }
+
+        UpdateAllCarsSceneVisibility();
+    }
+
+    private IEnumerator DeferredRepositionRoutine()
+    {
+        yield return null;
+        if (IsOwner || IsLocalPlayer)
+        {
+            RepositionToSceneSpawnPoint();
+        }
+        UpdateVisibilityBasedOnScene();
+    }
+
+    public void RepositionToSceneSpawnPoint()
+    {
+        Vector3 spawnPos = Vector3.zero;
+        Quaternion spawnRot = Quaternion.identity;
+        bool foundSpawn = false;
+
+        bool isHost = IsServer || (NetworkManager.Singleton != null && OwnerClientId == NetworkManager.ServerClientId) || isHostCarNet.Value;
+        int playerIndex = isHost ? 0 : 1;
+
+        if (SpawnPointConfig.Instance != null)
+        {
+            spawnPos = SpawnPointConfig.Instance.GetSpawnPosition(playerIndex, out spawnRot);
+            foundSpawn = true;
+        }
+
+        if (!foundSpawn)
+        {
+            SpawnPoint[] points = UnityEngine.Object.FindObjectsByType<SpawnPoint>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            if (points != null && points.Length > 0)
+            {
+                Array.Sort(points, (a, b) => string.Compare(a.gameObject.name, b.gameObject.name, StringComparison.OrdinalIgnoreCase));
+                int index = Mathf.Clamp(playerIndex, 0, points.Length - 1);
+                spawnPos = points[index].transform.position;
+                spawnRot = points[index].transform.rotation;
+                foundSpawn = true;
+            }
+        }
+
+        if (!foundSpawn)
+        {
+            GameObject[] tagged = GameObject.FindGameObjectsWithTag("SpawnPoint");
+            if (tagged != null && tagged.Length > 0)
+            {
+                Array.Sort(tagged, (a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
+                int index = Mathf.Clamp(playerIndex, 0, tagged.Length - 1);
+                spawnPos = tagged[index].transform.position;
+                spawnRot = tagged[index].transform.rotation;
+                foundSpawn = true;
+            }
+        }
+
+        if (!foundSpawn)
+        {
+            spawnPos = new Vector3(-9.97f, playerIndex == 1 ? -6.46f : -5.4f, 0f);
+        }
+
+        if (rb != null)
+        {
+            rb.position = spawnPos;
+            rb.linearVelocity = Vector2.zero;
+            rb.angularVelocity = 0f;
+        }
+
+        NetworkTransform netTransform = GetComponent<NetworkTransform>();
+        if (netTransform != null && netTransform.CanCommitToTransform)
+        {
+            netTransform.Teleport(spawnPos, spawnRot, transform.localScale);
+        }
+        else
+        {
+            transform.SetPositionAndRotation(spawnPos, spawnRot);
+        }
+
+        if (TryGetComponent<CarRespawn>(out var respawnComp))
+        {
+            respawnComp.SetCheckpoint(spawnPos, spawnRot);
+        }
+
+        CameraFollow camFollow = CameraFollow.Instance != null ? CameraFollow.Instance : (Camera.main != null ? Camera.main.GetComponent<CameraFollow>() : null);
+        if (camFollow == null) camFollow = UnityEngine.Object.FindFirstObjectByType<CameraFollow>();
+        if (camFollow != null && (IsOwner || IsLocalPlayer))
+        {
+            camFollow.SetTarget(transform);
+            camFollow.transform.position = new Vector3(spawnPos.x, spawnPos.y, camFollow.transform.position.z);
+        }
+
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.enabled = true;
+        }
+        if (boxCollider != null)
+        {
+            boxCollider.enabled = true;
+        }
+    }
+
     public override void OnNetworkDespawn()
     {
         isHostCarNet.OnValueChanged -= OnHostCarStateChanged;
+        currentSceneNet.OnValueChanged -= OnCurrentSceneChanged;
 
         if (healthComp != null)
         {
@@ -374,6 +593,49 @@ public class NetworkCarController : NetworkBehaviour
         }
 
         StopCarAudio();
+    }
+
+    private void OnCurrentSceneChanged(Unity.Collections.FixedString32Bytes previousState, Unity.Collections.FixedString32Bytes newState)
+    {
+        UpdateAllCarsSceneVisibility();
+
+        string sceneStr = newState.ToString();
+        if (sceneStr.Equals("Ending", StringComparison.OrdinalIgnoreCase))
+        {
+            string localScene = SceneManager.GetActiveScene().name;
+            if (!localScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
+                !localScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+            {
+                if (LevelTimer.Instance != null)
+                {
+                    LevelTimer.Instance.TriggerTimeOverFromMatchEnd();
+                }
+            }
+        }
+    }
+
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void NotifyMatchEndedRpc(ulong winnerClientId = 9999)
+    {
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && NetworkManager.Singleton.LocalClientId == winnerClientId)
+        {
+            return;
+        }
+
+        if (FinishLine.LocalPlayerHasWon || hasWonPlayer)
+        {
+            return;
+        }
+
+        string currentScene = SceneManager.GetActiveScene().name;
+        if (!currentScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
+            !currentScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            if (LevelTimer.Instance != null)
+            {
+                LevelTimer.Instance.TriggerTimeOverFromMatchEnd();
+            }
+        }
     }
 
     private void OnHostCarStateChanged(bool previousState, bool newState)
@@ -397,8 +659,7 @@ public class NetworkCarController : NetworkBehaviour
         }
     }
 
-    [Rpc(SendTo.Everyone)]
-    public void SetCarWonRpc()
+    public void SetCarWonLocal()
     {
         hasWonPlayer = true;
         isBoosted = false;
@@ -416,7 +677,13 @@ public class NetworkCarController : NetworkBehaviour
         StopCarAudio();
     }
 
-    [Rpc(SendTo.Everyone)]
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void SetCarWonRpc()
+    {
+        SetCarWonLocal();
+    }
+
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
     public void TeleportCarRpc(Vector3 position, Quaternion rotation)
     {
         NetworkTransform netTransform = GetComponent<NetworkTransform>();
@@ -456,10 +723,114 @@ public class NetworkCarController : NetworkBehaviour
         StopCarAudio();
     }
 
-    [Rpc(SendTo.Everyone)]
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
     public void ResetCarBoostStateRpc()
     {
         ResetCarBoostStateLocal();
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void UpdateCurrentSceneServerRpc(Unity.Collections.FixedString32Bytes sceneName)
+    {
+        currentSceneNet.Value = sceneName;
+        UpdateAllCarsSceneVisibility();
+    }
+
+    public bool IsInSameSceneAsLocalPlayer()
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return true;
+        if (IsOwner || IsLocalPlayer) return true;
+
+        string localScene = SceneManager.GetActiveScene().name;
+        string carScene = currentSceneNet.Value.ToString();
+
+        if (string.IsNullOrEmpty(carScene))
+        {
+            return false;
+        }
+
+        return string.Equals(carScene, localScene, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void UpdateVisibilityBasedOnScene()
+    {
+        bool isSameScene = IsInSameSceneAsLocalPlayer();
+
+        // 1. SpriteRenderer & all other Renderers on car and its children
+        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+        foreach (var r in renderers)
+        {
+            if (r != null)
+            {
+                r.enabled = isSameScene;
+            }
+        }
+
+        // Stop all particle systems if in different scene
+        ParticleSystem[] particles = GetComponentsInChildren<ParticleSystem>(true);
+        foreach (var p in particles)
+        {
+            if (p != null)
+            {
+                if (!isSameScene)
+                {
+                    p.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                }
+            }
+        }
+
+        // 2. Colliders
+        Collider2D[] colliders = GetComponentsInChildren<Collider2D>(true);
+        foreach (var c in colliders)
+        {
+            if (c != null)
+            {
+                c.enabled = isSameScene;
+            }
+        }
+
+        // 3. Audio sources
+        AudioSource[] audios = GetComponentsInChildren<AudioSource>(true);
+        foreach (var a in audios)
+        {
+            if (a != null)
+            {
+                a.mute = !isSameScene;
+                if (!isSameScene && a.isPlaying)
+                {
+                    a.Stop();
+                }
+            }
+        }
+
+        // 4. Start prompt visual
+        if (startPromptVisual != null)
+        {
+            if (!isSameScene)
+            {
+                startPromptVisual.SetActive(false);
+            }
+            else if (!isBoosted && !hasWonPlayer && (IsOwner || IsLocalPlayer))
+            {
+                startPromptVisual.SetActive(true);
+            }
+            else
+            {
+                startPromptVisual.SetActive(false);
+            }
+        }
+    }
+
+    public static void UpdateAllCarsSceneVisibility()
+    {
+        NetworkCarController[] allCars = UnityEngine.Object.FindObjectsByType<NetworkCarController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var car in allCars)
+        {
+            if (car != null)
+            {
+                car.UpdateVisibilityBasedOnScene();
+            }
+        }
     }
 
     public void ResetCarBoostStateLocal()
@@ -483,6 +854,11 @@ public class NetworkCarController : NetworkBehaviour
         currentSpeed = speed;
         SetupStartPromptVisual();
 
+        if (healthComp != null)
+        {
+            healthComp.ResetLocalSpawnState();
+        }
+
         if (boxCollider != null)
         {
             boxCollider.gameObject.layer = playerLayer;
@@ -491,14 +867,22 @@ public class NetworkCarController : NetworkBehaviour
 
         if (rb != null)
         {
-            rb.interpolation = RigidbodyInterpolation2D.Interpolate;
-            rb.bodyType = (IsOwner || IsLocalPlayer) ? RigidbodyType2D.Dynamic : RigidbodyType2D.Kinematic;
-            rb.simulated = true;
-            rb.linearVelocity = Vector2.zero;
-            rb.angularVelocity = 0f;
+            if (IsOwner || IsLocalPlayer)
+            {
+                rb.simulated = true;
+                rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+                rb.bodyType = RigidbodyType2D.Dynamic;
+                rb.linearVelocity = Vector2.zero;
+                rb.angularVelocity = 0f;
+            }
+            else
+            {
+                rb.simulated = false;
+            }
         }
 
         StopCarAudio();
+        UpdateVisibilityBasedOnScene();
     }
 
     private IEnumerator RetryApplyLevelJumpSettings()
@@ -587,6 +971,51 @@ public class NetworkCarController : NetworkBehaviour
 
     private void Update()
     {
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) || activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            if (spriteRenderer != null && spriteRenderer.enabled) spriteRenderer.enabled = false;
+            if (boxCollider != null && boxCollider.enabled) boxCollider.enabled = false;
+            if (startPromptVisual != null && startPromptVisual.activeSelf) startPromptVisual.SetActive(false);
+            StopCarAudio();
+            return;
+        }
+
+        bool inSameScene = IsInSameSceneAsLocalPlayer();
+
+        if (!IsOwner && !IsLocalPlayer)
+        {
+            if (!inSameScene)
+            {
+                if (spriteRenderer != null && spriteRenderer.enabled) spriteRenderer.enabled = false;
+                Renderer[] allR = GetComponentsInChildren<Renderer>(true);
+                foreach (var r in allR) if (r != null && r.enabled) r.enabled = false;
+
+                Collider2D[] allC = GetComponentsInChildren<Collider2D>(true);
+                foreach (var c in allC) if (c != null && c.enabled) c.enabled = false;
+
+                StopCarAudio();
+                if (startPromptVisual != null && startPromptVisual.activeSelf) startPromptVisual.SetActive(false);
+                return;
+            }
+            else
+            {
+                if (healthComp != null && !healthComp.isDead.Value)
+                {
+                    if (spriteRenderer != null && !spriteRenderer.enabled) spriteRenderer.enabled = true;
+                    if (boxCollider != null && !boxCollider.enabled) boxCollider.enabled = true;
+                }
+            }
+        }
+        else
+        {
+            if (healthComp != null && !healthComp.isDead.Value && !healthComp.LocalDeathRequested)
+            {
+                if (spriteRenderer != null && !spriteRenderer.enabled) spriteRenderer.enabled = true;
+                if (boxCollider != null && !boxCollider.enabled) boxCollider.enabled = true;
+            }
+        }
+
         if (!isBoosted && !hasWonPlayer && startPromptVisual != null)
         {
             if (!startPromptVisual.activeSelf) startPromptVisual.SetActive(true);
@@ -603,6 +1032,26 @@ public class NetworkCarController : NetworkBehaviour
         }
 
         if (!IsOwner && !IsLocalPlayer) return;
+
+        // Check Esc / Gamepad Menu Button to return to MainMenu
+        bool menuPressed = false;
+        if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
+        {
+            menuPressed = true;
+        }
+
+        Gamepad activeGamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+        if (activeGamepad != null && (activeGamepad.startButton.wasPressedThisFrame || activeGamepad.selectButton.wasPressedThisFrame))
+        {
+            menuPressed = true;
+        }
+
+        if (menuPressed)
+        {
+            ReturnToMainMenu();
+            return;
+        }
+
         if (hasWonPlayer) return;
         if (healthComp != null && (healthComp.isDead.Value || healthComp.LocalDeathRequested))
         {
@@ -631,7 +1080,7 @@ public class NetworkCarController : NetworkBehaviour
             actionPressed = true;
         }
 
-        if (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame)
+        if (activeGamepad != null && activeGamepad.buttonSouth.wasPressedThisFrame)
         {
             actionPressed = true;
         }
@@ -713,11 +1162,28 @@ public class NetworkCarController : NetworkBehaviour
         nextJumpTime = Time.time + jumpCooldown;
         canJump = false;
 
-        TriggerJumpRpc();
+        if (IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            TriggerJumpRpc(SceneManager.GetActiveScene().name);
+        }
+        else
+        {
+            if (jumpCoroutine != null)
+            {
+                StopCoroutine(jumpCoroutine);
+            }
+            jumpCoroutine = StartCoroutine(JumpEffect());
+        }
     }
 
     private void FixedUpdate()
     {
+        string activeScene = SceneManager.GetActiveScene().name;
+        if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) || activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         if (!IsOwner && !IsLocalPlayer) return;
         if (hasWonPlayer) return;
         if (healthComp != null && (healthComp.isDead.Value || healthComp.LocalDeathRequested))
@@ -854,9 +1320,20 @@ public class NetworkCarController : NetworkBehaviour
         if (driftAudioSource != null && driftAudioSource.isPlaying) driftAudioSource.Stop();
     }
 
-    [Rpc(SendTo.Everyone)]
-    private void TriggerJumpRpc()
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    private void TriggerJumpRpc(Unity.Collections.FixedString32Bytes sceneName)
     {
+        string localScene = SceneManager.GetActiveScene().name;
+        if (!string.Equals(sceneName.ToString(), localScene, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!IsInSameSceneAsLocalPlayer())
+        {
+            return;
+        }
+
         if (jumpCoroutine != null)
         {
             StopCoroutine(jumpCoroutine);
@@ -866,6 +1343,8 @@ public class NetworkCarController : NetworkBehaviour
 
     private IEnumerator JumpEffect()
     {
+        if (!IsInSameSceneAsLocalPlayer()) yield break;
+
         isJumping = true;
         jumpStartTime = Time.time;
         StopCarAudio();
@@ -1051,7 +1530,7 @@ public class NetworkCarController : NetworkBehaviour
 
     private void UpdateTyreMark(Transform tyre, ref Vector2 lastPosition, ref float distance)
     {
-        if (tyre == null || (!IsOwner && !IsLocalPlayer)) return;
+        if (tyre == null || (!IsOwner && !IsLocalPlayer) || !IsInSameSceneAsLocalPlayer()) return;
 
         Vector2 currentPosition = tyre.position;
         distance += Vector2.Distance(currentPosition, lastPosition);
@@ -1092,6 +1571,23 @@ public class NetworkCarController : NetworkBehaviour
 
             Destroy(fallbackMark, tyreMarkLifetime);
         }
+    }
+
+    public void ReturnToMainMenu()
+    {
+        StopCarAudio();
+
+        if (RelayManager.Instance != null)
+        {
+            RelayManager.Instance.ShutdownSession();
+        }
+
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            NetworkManager.Singleton.Shutdown();
+        }
+
+        SceneManager.LoadScene("MainMenu");
     }
 
     public override void OnDestroy()

@@ -134,6 +134,10 @@ public class GameButton : MonoBehaviour
         AnimateButtonScale();
     }
 
+    [Header("Rotation Settings")]
+    [SerializeField] private float buttonWobbleSpeed = 4.0f;
+    [SerializeField] private float buttonWobbleAngle = 2.0f;
+
     private void ReadNavigationInput()
     {
         if (Time.unscaledTime < nextMoveTime) return;
@@ -141,19 +145,19 @@ public class GameButton : MonoBehaviour
 
         bool moveTriggered = false;
 
-        // 1. Keyboard WASD + Arrow Keys
+        // 1. Keyboard Arrow Keys ONLY
         if (Keyboard.current != null)
         {
-            if (Keyboard.current.upArrowKey.wasPressedThisFrame || Keyboard.current.wKey.wasPressedThisFrame ||
-                Keyboard.current.downArrowKey.wasPressedThisFrame || Keyboard.current.sKey.wasPressedThisFrame ||
-                Keyboard.current.leftArrowKey.wasPressedThisFrame || Keyboard.current.aKey.wasPressedThisFrame ||
-                Keyboard.current.rightArrowKey.wasPressedThisFrame || Keyboard.current.dKey.wasPressedThisFrame)
+            if (Keyboard.current.upArrowKey.wasPressedThisFrame ||
+                Keyboard.current.downArrowKey.wasPressedThisFrame ||
+                Keyboard.current.leftArrowKey.wasPressedThisFrame ||
+                Keyboard.current.rightArrowKey.wasPressedThisFrame)
             {
                 moveTriggered = true;
             }
         }
 
-        // 2. Gamepad D-Pad ONLY (Left Stick navigation strictly disabled for UI button selection)
+        // 2. Gamepad D-Pad ONLY (Left Stick strictly disabled)
         Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
         if (gamepad != null)
         {
@@ -220,6 +224,17 @@ public class GameButton : MonoBehaviour
 
     private void HandleWinningContinueInput()
     {
+        // In 2-player multiplayer, do not allow manual skipping to next level.
+        // Level transitions must only be triggered when both players finish or finish timer expires.
+        bool isMultiplayer = Unity.Netcode.NetworkManager.Singleton != null &&
+                             Unity.Netcode.NetworkManager.Singleton.IsListening &&
+                             Unity.Netcode.NetworkManager.Singleton.ConnectedClientsIds.Count > 1;
+
+        if (isMultiplayer)
+        {
+            return;
+        }
+
         if (!IsContinuePressed())
         {
             return;
@@ -257,10 +272,12 @@ public class GameButton : MonoBehaviour
         }
 
         var selected = eventSystem.currentSelectedGameObject;
+        float rotZ = Mathf.Sin(Time.unscaledTime * buttonWobbleSpeed) * buttonWobbleAngle;
 
         if (restartButton != null)
         {
-            var target = (selected == restartButton.gameObject || selectedIndex == 0)
+            bool isSelected = (selected == restartButton.gameObject || selectedIndex == 0);
+            var target = isSelected
                 ? restartBaseScale * selectedScaleMultiplier
                 : restartBaseScale * unselectedScaleMultiplier;
 
@@ -269,11 +286,16 @@ public class GameButton : MonoBehaviour
                 target,
                 Time.unscaledDeltaTime * scaleLerpSpeed
             );
+
+            restartButton.transform.localRotation = isSelected
+                ? Quaternion.Euler(0f, 0f, rotZ)
+                : Quaternion.Lerp(restartButton.transform.localRotation, Quaternion.identity, Time.unscaledDeltaTime * 10f);
         }
 
         if (mainMenuButton != null)
         {
-            var target = (selected == mainMenuButton.gameObject || selectedIndex == 1)
+            bool isSelected = (selected == mainMenuButton.gameObject || selectedIndex == 1);
+            var target = isSelected
                 ? mainMenuBaseScale * selectedScaleMultiplier
                 : mainMenuBaseScale * unselectedScaleMultiplier;
 
@@ -282,11 +304,24 @@ public class GameButton : MonoBehaviour
                 target,
                 Time.unscaledDeltaTime * scaleLerpSpeed
             );
+
+            mainMenuButton.transform.localRotation = isSelected
+                ? Quaternion.Euler(0f, 0f, rotZ)
+                : Quaternion.Lerp(mainMenuButton.transform.localRotation, Quaternion.identity, Time.unscaledDeltaTime * 10f);
         }
     }
 
     public void RestartLevel()
     {
+        if (Unity.Netcode.NetworkManager.Singleton != null &&
+            Unity.Netcode.NetworkManager.Singleton.IsListening &&
+            Unity.Netcode.NetworkManager.Singleton.IsServer &&
+            Unity.Netcode.NetworkManager.Singleton.SceneManager != null)
+        {
+            Unity.Netcode.NetworkManager.Singleton.SceneManager.LoadScene(SceneManager.GetActiveScene().name, LoadSceneMode.Single);
+            return;
+        }
+
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
@@ -294,8 +329,17 @@ public class GameButton : MonoBehaviour
     {
         if (string.IsNullOrWhiteSpace(mainMenuSceneName))
         {
-            Debug.LogWarning("Main menu scene name is empty on GameButton.");
-            return;
+            mainMenuSceneName = "MainMenu";
+        }
+
+        if (RelayManager.Instance != null)
+        {
+            RelayManager.Instance.ShutdownSession();
+        }
+
+        if (Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsListening)
+        {
+            Unity.Netcode.NetworkManager.Singleton.Shutdown();
         }
 
         SceneManager.LoadScene(mainMenuSceneName);
@@ -303,6 +347,14 @@ public class GameButton : MonoBehaviour
 
     private void LoadNextScene()
     {
+        if (NetworkRaceManager.Instance != null &&
+            Unity.Netcode.NetworkManager.Singleton != null &&
+            Unity.Netcode.NetworkManager.Singleton.IsServer)
+        {
+            NetworkRaceManager.Instance.LoadNextLevelServer();
+            return;
+        }
+
         int currentIndex = SceneManager.GetActiveScene().buildIndex;
         int nextIndex = currentIndex + 1;
 

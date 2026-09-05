@@ -25,27 +25,16 @@ public class NetworkRaceManager : NetworkBehaviour
     public NetworkVariable<ulong> winnerClientId = new NetworkVariable<ulong>(9999);
     public NetworkVariable<int> connectedPlayerCount = new NetworkVariable<int>(1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     public NetworkVariable<int> readyPlayerCount = new NetworkVariable<int>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    public NetworkVariable<int> playAgainReadyCount = new NetworkVariable<int>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     public event Action<RaceState> OnRaceStateChanged;
     public event Action<int> OnCountdownTick;
-    public event Action<ulong> OnPlayerFinished;
     public event Action<int> OnPlayerCountChanged;
     public event Action<int, int> OnReadyPlayerCountChanged;
-    public event Action OnBothPlayersFinished;
-    public event Action<ulong> OnPlayerTimeIsLess;
+    public event Action<int, int> OnPlayAgainCountChanged;
 
-    private readonly List<ulong> finishedPlayers = new List<ulong>();
     private readonly HashSet<ulong> readyPlayersSet = new HashSet<ulong>();
-
-    [Header("Finish Window Timer")]
-    [SerializeField] private float finishWindowDuration = 40.0f;
-    private Coroutine finishWindowCoroutine;
-
-    public NetworkVariable<float> finishWindowTimer = new NetworkVariable<float>(
-        0f,
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Server
-    );
+    private readonly HashSet<ulong> playAgainPlayersSet = new HashSet<ulong>();
 
     private void Awake()
     {
@@ -56,6 +45,16 @@ public class NetworkRaceManager : NetworkBehaviour
         }
 
         Instance = this;
+        DontDestroyOnLoad(gameObject);
+    }
+
+    public override void OnDestroy()
+    {
+        base.OnDestroy();
+        if (Instance == this)
+        {
+            Instance = null;
+        }
     }
 
     public override void OnNetworkSpawn()
@@ -64,13 +63,15 @@ public class NetworkRaceManager : NetworkBehaviour
         countdownTimer.OnValueChanged += HandleCountdownTimerChanged;
         connectedPlayerCount.OnValueChanged += HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged += HandleReadyPlayerCountChanged;
+        playAgainReadyCount.OnValueChanged += HandlePlayAgainReadyCountChanged;
 
         if (IsServer)
         {
             connectedPlayerCount.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
             readyPlayerCount.Value = 0;
+            playAgainReadyCount.Value = 0;
             readyPlayersSet.Clear();
-            finishedPlayers.Clear();
+            playAgainPlayersSet.Clear();
         }
 
         SceneManager.sceneLoaded += OnSceneLoaded;
@@ -82,6 +83,7 @@ public class NetworkRaceManager : NetworkBehaviour
         countdownTimer.OnValueChanged -= HandleCountdownTimerChanged;
         connectedPlayerCount.OnValueChanged -= HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged -= HandleReadyPlayerCountChanged;
+        playAgainReadyCount.OnValueChanged -= HandlePlayAgainReadyCountChanged;
 
         SceneManager.sceneLoaded -= OnSceneLoaded;
     }
@@ -90,12 +92,12 @@ public class NetworkRaceManager : NetworkBehaviour
     {
         if (IsServer)
         {
-            finishedPlayers.Clear();
             readyPlayersSet.Clear();
+            playAgainPlayersSet.Clear();
             readyPlayerCount.Value = 0;
+            playAgainReadyCount.Value = 0;
             currentRaceState.Value = RaceState.LobbyWaiting;
             winnerClientId.Value = 9999;
-            finishWindowTimer.Value = 0f;
         }
     }
 
@@ -149,108 +151,119 @@ public class NetworkRaceManager : NetworkBehaviour
         }
     }
 
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    public void RequestPlayerCrossedFinishServerRpc(ulong clientId)
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void NotifyMatchEndedRpc(ulong winnerClientId = 9999)
     {
-        PlayerCrossedFinishServer(clientId);
-    }
-
-    public void PlayerCrossedFinishServer(ulong clientId)
-    {
-        if (!IsServer) return;
-        if (finishedPlayers.Contains(clientId)) return;
-
-        finishedPlayers.Add(clientId);
-
-        if (finishedPlayers.Count == 1)
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && NetworkManager.Singleton.LocalClientId == winnerClientId)
         {
-            winnerClientId.Value = clientId;
-            currentRaceState.Value = RaceState.Finished;
-
-            if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
-            finishWindowCoroutine = StartCoroutine(FinishWindowRoutine());
+            return;
         }
 
-        NotifyPlayerFinishedClientRpc(clientId);
-
-        // If ALL connected players crossed the finish line before window expired:
-        if (NetworkManager.Singleton != null && finishedPlayers.Count >= NetworkManager.Singleton.ConnectedClientsIds.Count)
+        if (FinishLine.LocalPlayerHasWon || (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.hasWonPlayer))
         {
-            if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
-            NotifyBothFinishedClientRpc();
-            StartCoroutine(DelayedTransitionNextLevelRoutine(3.0f));
-        }
-    }
-
-    private IEnumerator FinishWindowRoutine()
-    {
-        float remaining = finishWindowDuration;
-        while (remaining > 0f)
-        {
-            finishWindowTimer.Value = remaining;
-            yield return new WaitForSeconds(1.0f);
-            remaining -= 1.0f;
+            return;
         }
 
-        finishWindowTimer.Value = 0f;
-
-        // Window expired! For any connected player who didn't finish, notify TimeIsLess and load next level
-        if (NetworkManager.Singleton != null)
+        string currentScene = SceneManager.GetActiveScene().name;
+        if (!currentScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
+            !currentScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (ulong id in NetworkManager.Singleton.ConnectedClientsIds)
+            if (LevelTimer.Instance != null)
             {
-                if (!finishedPlayers.Contains(id))
-                {
-                    NotifyTimeIsLessClientRpc(id);
-                }
+                LevelTimer.Instance.TriggerTimeOverFromMatchEnd();
+            }
+            else if (LeaderboardManager.Instance != null)
+            {
+                LeaderboardManager.Instance.EnsureAllLevelsRecorded();
             }
         }
-
-        StartCoroutine(DelayedTransitionNextLevelRoutine(2.5f));
     }
 
-    [ClientRpc]
-    private void NotifyPlayerFinishedClientRpc(ulong clientId)
+    public void NotifyPlayerReachedEndingServer(ulong clientId)
     {
-        OnPlayerFinished?.Invoke(clientId);
-    }
-
-    [ClientRpc]
-    private void NotifyBothFinishedClientRpc()
-    {
-        OnBothPlayersFinished?.Invoke();
-    }
-
-    [ClientRpc]
-    private void NotifyTimeIsLessClientRpc(ulong clientId)
-    {
-        OnPlayerTimeIsLess?.Invoke(clientId);
-    }
-
-    private IEnumerator DelayedTransitionNextLevelRoutine(float delaySeconds)
-    {
-        yield return new WaitForSeconds(delaySeconds);
-        LoadNextLevelServer();
+        NotifyMatchEndedRpc(clientId);
     }
 
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    public void RequestSetReadyServerRpc(ulong clientId)
+    public void RequestPlayerReachedEndingServerRpc(ulong clientId)
+    {
+        NotifyMatchEndedRpc(clientId);
+    }
+
+    [ClientRpc]
+    public void NotifyMatchEndedTimeOverClientRpc(ulong winnerClientId)
+    {
+        NotifyMatchEndedRpc(winnerClientId);
+    }
+
+    [ClientRpc]
+    public void ForceAllPlayersToEndingClientRpc()
+    {
+        NotifyMatchEndedRpc(9999);
+    }
+
+    private void HandlePlayAgainReadyCountChanged(int previousVal, int newVal)
+    {
+        int total = connectedPlayerCount.Value;
+        OnPlayAgainCountChanged?.Invoke(newVal, total);
+    }
+
+    [ClientRpc]
+    public void ShowTransitionCoverClientRpc()
+    {
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.ShowTransitionCover();
+        }
+    }
+
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void RequestPlayAgainServerRpc(ulong clientId)
     {
         if (!IsServer) return;
 
-        if (!readyPlayersSet.Contains(clientId))
+        if (!playAgainPlayersSet.Contains(clientId))
         {
-            readyPlayersSet.Add(clientId);
-            readyPlayerCount.Value = readyPlayersSet.Count;
+            playAgainPlayersSet.Add(clientId);
+            playAgainReadyCount.Value = playAgainPlayersSet.Count;
             int totalRequired = NetworkManager.Singleton.ConnectedClientsIds.Count;
 
-            if (readyPlayersSet.Count >= totalRequired)
+            if (playAgainPlayersSet.Count >= totalRequired)
             {
-                if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
-                readyPlayersSet.Clear();
-                readyPlayerCount.Value = 0;
-                LoadNextLevelServer();
+                playAgainPlayersSet.Clear();
+                playAgainReadyCount.Value = 0;
+
+                ShowTransitionCoverClientRpc();
+                StartCoroutine(DelayedPlayAgainLoadRoutine(0.4f));
             }
+        }
+    }
+
+    private IEnumerator DelayedPlayAgainLoadRoutine(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+
+        if (LeaderboardManager.Instance != null)
+        {
+            LeaderboardManager.Instance.ResetRun();
+        }
+
+        if (LevelTimer.Instance != null)
+        {
+            LevelTimer.Instance.ResetRunTimer();
+        }
+
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null && NetworkManager.Singleton.IsListening)
+        {
+            var status = NetworkManager.Singleton.SceneManager.LoadScene("Level 1", LoadSceneMode.Single);
+            if (status != SceneEventProgressStatus.Started)
+            {
+                SceneManager.LoadScene("Level 1");
+            }
+        }
+        else
+        {
+            SceneManager.LoadScene("Level 1");
         }
     }
 
@@ -258,34 +271,38 @@ public class NetworkRaceManager : NetworkBehaviour
     {
         if (!IsServer) return;
 
-        if (finishWindowCoroutine != null) StopCoroutine(finishWindowCoroutine);
+        ShowTransitionCoverClientRpc();
 
-        int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
-        if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
+        string currentSceneName = SceneManager.GetActiveScene().name;
+        string nextSceneName = GetNextSceneName(currentSceneName);
+
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null && NetworkManager.Singleton.IsListening)
         {
-            string sceneName = SceneUtility.GetScenePathByBuildIndex(nextSceneIndex);
-            sceneName = System.IO.Path.GetFileNameWithoutExtension(sceneName);
-
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null)
+            var status = NetworkManager.Singleton.SceneManager.LoadScene(nextSceneName, LoadSceneMode.Single);
+            if (status != SceneEventProgressStatus.Started)
             {
-                NetworkManager.Singleton.SceneManager.LoadScene(sceneName, LoadSceneMode.Single);
-            }
-            else
-            {
-                SceneManager.LoadScene(nextSceneIndex);
+                SceneManager.LoadScene(nextSceneName);
             }
         }
         else
         {
-            // Last level completed — load Ending scene
-            if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null)
-            {
-                NetworkManager.Singleton.SceneManager.LoadScene("Ending", LoadSceneMode.Single);
-            }
-            else
-            {
-                SceneManager.LoadScene("Ending");
-            }
+            SceneManager.LoadScene(nextSceneName);
         }
+    }
+
+    private string GetNextSceneName(string currentSceneName)
+    {
+        if (currentSceneName.Equals("Level 1", StringComparison.OrdinalIgnoreCase)) return "Level 2";
+        if (currentSceneName.Equals("Level 2", StringComparison.OrdinalIgnoreCase)) return "Level 3";
+        if (currentSceneName.Equals("Level 3", StringComparison.OrdinalIgnoreCase)) return "Level 4";
+        if (currentSceneName.Equals("Level 4", StringComparison.OrdinalIgnoreCase)) return "Ending";
+
+        int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
+        if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
+        {
+            string scenePath = SceneUtility.GetScenePathByBuildIndex(nextSceneIndex);
+            return System.IO.Path.GetFileNameWithoutExtension(scenePath);
+        }
+        return "Ending";
     }
 }

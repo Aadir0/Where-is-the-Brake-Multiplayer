@@ -13,7 +13,7 @@ using UnityEngine;
 public class RelayManager : MonoBehaviour
 {
     [SerializeField] private float clientConnectionTimeout = 60f;
-    private const string relayProtocol = "dtls";
+    private const string relayProtocol = "udp";
     private const int clientConnectionBufferTimeoutSeconds = 30;
 
     public static RelayManager Instance { get; private set; }
@@ -472,11 +472,14 @@ public class RelayManager : MonoBehaviour
         networkManager.NetworkConfig.ClientConnectionBufferTimeout = clientConnectionBufferTimeoutSeconds;
         networkManager.NetworkConfig.EnableSceneManagement = true;
         networkManager.NetworkConfig.ForceSamePrefabs = false;
+        networkManager.NetworkConfig.TickRate = 60;
     }
 
     private static void ConfigureTransportForRelay(UnityTransport transport)
     {
         transport.UseWebSockets = relayProtocol == "wss";
+        transport.MaxSendQueueSize = 1024 * 1024;
+        transport.MaxConnectAttempts = 10;
     }
 
     private static string CreateServicesProfileName()

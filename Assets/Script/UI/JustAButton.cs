@@ -148,14 +148,7 @@ public class JustAButton : MonoBehaviour
     public void HostGame()
     {
         if (hostGameButton != null) AnimateButtonPress(hostGameButton);
-        if (SceneTransitionManager.Instance != null)
-        {
-            SceneTransitionManager.Instance.TriggerTransition(() =>
-            {
-                if (LobbyUI.Instance != null) LobbyUI.Instance.CreateRoom();
-            });
-        }
-        else if (LobbyUI.Instance != null)
+        if (LobbyUI.Instance != null)
         {
             LobbyUI.Instance.CreateRoom();
         }
@@ -428,29 +421,34 @@ public class JustAButton : MonoBehaviour
 
         float vertical = 0f;
 
+        // 1. Keyboard Arrow Keys ONLY (WASD disabled for UI selection)
         if (Keyboard.current != null)
         {
-            if (Keyboard.current.upArrowKey.isPressed ||
-                Keyboard.current.wKey.isPressed)
+            if (Keyboard.current.upArrowKey.isPressed || Keyboard.current.leftArrowKey.isPressed)
             {
                 vertical = 1f;
             }
-            else if (Keyboard.current.downArrowKey.isPressed ||
-                     Keyboard.current.sKey.isPressed)
+            else if (Keyboard.current.downArrowKey.isPressed || Keyboard.current.rightArrowKey.isPressed)
             {
                 vertical = -1f;
             }
         }
 
+        // 2. Gamepad D-Pad ONLY (Left stick disabled for UI selection)
         Gamepad gamepad = GetGamepad();
 
         if (gamepad != null)
         {
             float dpadY = gamepad.dpad.ReadValue().y;
+            float dpadX = gamepad.dpad.ReadValue().x;
 
             if (Mathf.Abs(dpadY) >= gamepadDeadzone)
             {
                 vertical = dpadY;
+            }
+            else if (Mathf.Abs(dpadX) >= gamepadDeadzone)
+            {
+                vertical = -dpadX;
             }
         }
 

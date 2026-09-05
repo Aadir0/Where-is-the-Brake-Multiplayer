@@ -1,3 +1,4 @@
+using System;
 using Unity.Netcode;
 using UnityEngine;
 
@@ -38,6 +39,11 @@ public class CameraFollow : MonoBehaviour
     {
         target = newTarget;
         targetRb = target != null ? target.GetComponent<Rigidbody2D>() : null;
+        if (target != null)
+        {
+            Vector3 desiredPos = target.position + offset;
+            transform.position = new Vector3(desiredPos.x, desiredPos.y, transform.position.z);
+        }
     }
 
     private void Awake()
@@ -52,12 +58,51 @@ public class CameraFollow : MonoBehaviour
         cam = GetComponent<Camera>();
     }
 
+    private void OnEnable()
+    {
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    private void OnDisable()
+    {
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+    {
+        if (scene.name.Equals("Ending", StringComparison.OrdinalIgnoreCase) || scene.name.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            target = null;
+            confinerCollider = null;
+            enableConfiner = false;
+            return;
+        }
+
+        confinerCollider = null;
+        enableConfiner = false;
+        FindTargetByTag();
+        FindConfinerInScene();
+        UpdateBoundsFromCollider();
+
+        if (target != null)
+        {
+            Vector3 desiredPos = target.position + offset;
+            transform.position = new Vector3(desiredPos.x, desiredPos.y, transform.position.z);
+        }
+    }
+
     private void Start()
     {
         if (cam == null) cam = GetComponent<Camera>();
         FindTargetByTag();
         FindConfinerInScene();
         UpdateBoundsFromCollider();
+
+        if (target != null)
+        {
+            Vector3 desiredPos = target.position + offset;
+            transform.position = new Vector3(desiredPos.x, desiredPos.y, transform.position.z);
+        }
     }
 
     public void TriggerShake()
@@ -73,22 +118,21 @@ public class CameraFollow : MonoBehaviour
 
     public void FindConfinerInScene()
     {
-        if (confinerCollider != null) return;
+        if (confinerCollider != null && confinerCollider.gameObject.scene.isLoaded) return;
+        confinerCollider = null;
 
         GameObject confinerObj = GameObject.FindGameObjectWithTag("Confiner");
         if (confinerObj != null)
         {
             confinerCollider = confinerObj.GetComponent<Collider2D>();
         }
+    }
 
-        if (confinerCollider == null)
+    private void OnDestroy()
+    {
+        if (Instance == this)
         {
-            confinerCollider = Object.FindFirstObjectByType<PolygonCollider2D>();
-        }
-
-        if (confinerCollider == null)
-        {
-            confinerCollider = Object.FindFirstObjectByType<CompositeCollider2D>();
+            Instance = null;
         }
     }
 
@@ -96,7 +140,7 @@ public class CameraFollow : MonoBehaviour
     {
         FindConfinerInScene();
 
-        if (confinerCollider != null)
+        if (confinerCollider != null && confinerCollider.gameObject.scene.isLoaded)
         {
             Bounds b = confinerCollider.bounds;
             minX = b.min.x;
@@ -105,22 +149,40 @@ public class CameraFollow : MonoBehaviour
             maxY = b.max.y;
             enableConfiner = true;
         }
+        else
+        {
+            enableConfiner = false;
+        }
     }
 
     private void FindTargetByTag()
     {
+        NetworkCarController[] cars = UnityEngine.Object.FindObjectsByType<NetworkCarController>(FindObjectsSortMode.None);
+        foreach (var car in cars)
+        {
+            if (car.IsOwner || car.IsLocalPlayer)
+            {
+                SetTarget(car.transform);
+                return;
+            }
+        }
+
         GameObject[] players = GameObject.FindGameObjectsWithTag(targetTag);
         foreach (GameObject player in players)
         {
             NetworkObject netObj = player.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsOwner)
+            if (netObj != null && (netObj.IsOwner || netObj.IsLocalPlayer))
             {
                 SetTarget(player.transform);
                 return;
             }
         }
 
-        if (players.Length > 0 && target == null)
+        if (cars.Length > 0 && target == null)
+        {
+            SetTarget(cars[0].transform);
+        }
+        else if (players.Length > 0 && target == null)
         {
             SetTarget(players[0].transform);
         }
@@ -131,7 +193,7 @@ public class CameraFollow : MonoBehaviour
         if (target == null)
         {
             FindTargetByTag();
-            return;
+            if (target == null) return;
         }
 
         if (targetRb == null && target != null)
@@ -161,7 +223,7 @@ public class CameraFollow : MonoBehaviour
         if (shakeTimer > 0f)
         {
             shakeTimer -= Time.deltaTime;
-            Vector2 randomOffset = Random.insideUnitCircle * currentShakeIntensity;
+            Vector2 randomOffset = UnityEngine.Random.insideUnitCircle * currentShakeIntensity;
             smoothedPosition.x += randomOffset.x;
             smoothedPosition.y += randomOffset.y;
         }
@@ -192,11 +254,15 @@ public class CameraFollow : MonoBehaviour
 
         if (confinerCollider == null)
         {
-            // Simple rectangular fallback bounds if no collider is assigned or found
             if (confineScreenEdges && cam != null && cam.orthographic)
             {
-                pos.x = Mathf.Clamp(pos.x, minX + halfWidth, maxX - halfWidth);
-                pos.y = Mathf.Clamp(pos.y, minY + halfHeight, maxY - halfHeight);
+                float fallbackMinX = minX + halfWidth;
+                float fallbackMaxX = maxX - halfWidth;
+                float fallbackMinY = minY + halfHeight;
+                float fallbackMaxY = maxY - halfHeight;
+
+                pos.x = fallbackMinX > fallbackMaxX ? (minX + maxX) * 0.5f : Mathf.Clamp(pos.x, fallbackMinX, fallbackMaxX);
+                pos.y = fallbackMinY > fallbackMaxY ? (minY + maxY) * 0.5f : Mathf.Clamp(pos.y, fallbackMinY, fallbackMaxY);
             }
             else
             {
@@ -206,86 +272,14 @@ public class CameraFollow : MonoBehaviour
             return pos;
         }
 
-        // --- UNIVERSAL COLLIDER SHAPE CONFINEMENT ---
-        // Works with ANY Collider2D: PolygonCollider2D, CompositeCollider2D,
-        // BoxCollider2D, CircleCollider2D, CapsuleCollider2D, EdgeCollider2D, etc.
-        // Uses ClosestPoint on all 4 camera viewport corners to push the
-        // camera frustum inside the exact collider geometry.
-
-        // First pass: coarse AABB clamp to keep camera in the collider's bounding region
         Bounds b = confinerCollider.bounds;
         float boundMinX = b.min.x + (confineScreenEdges ? halfWidth : 0f);
         float boundMaxX = b.max.x - (confineScreenEdges ? halfWidth : 0f);
         float boundMinY = b.min.y + (confineScreenEdges ? halfHeight : 0f);
         float boundMaxY = b.max.y - (confineScreenEdges ? halfHeight : 0f);
 
-        if (boundMinX > boundMaxX) boundMinX = boundMaxX = b.center.x;
-        if (boundMinY > boundMaxY) boundMinY = boundMaxY = b.center.y;
-
-        pos.x = Mathf.Clamp(pos.x, boundMinX, boundMaxX);
-        pos.y = Mathf.Clamp(pos.y, boundMinY, boundMaxY);
-
-        // Second pass: iterative 4-corner frustum push against exact collider shape
-        // ClosestPoint returns the input point when inside, or the nearest surface
-        // point when outside. A non-zero diff means the corner is outside the collider.
-        if (confineScreenEdges && cam != null && cam.orthographic)
-        {
-            for (int iter = 0; iter < 8; iter++)
-            {
-                Vector2 bl = new Vector2(pos.x - halfWidth, pos.y - halfHeight);
-                Vector2 br = new Vector2(pos.x + halfWidth, pos.y - halfHeight);
-                Vector2 tl = new Vector2(pos.x - halfWidth, pos.y + halfHeight);
-                Vector2 tr = new Vector2(pos.x + halfWidth, pos.y + halfHeight);
-
-                Vector2 totalPush = Vector2.zero;
-                int outsideCount = 0;
-
-                // Check each corner and accumulate push vectors
-                Vector2 cBL = confinerCollider.ClosestPoint(bl);
-                Vector2 dBL = cBL - bl;
-                if (dBL.sqrMagnitude > 0.0001f) { totalPush += dBL; outsideCount++; }
-
-                Vector2 cBR = confinerCollider.ClosestPoint(br);
-                Vector2 dBR = cBR - br;
-                if (dBR.sqrMagnitude > 0.0001f) { totalPush += dBR; outsideCount++; }
-
-                Vector2 cTL = confinerCollider.ClosestPoint(tl);
-                Vector2 dTL = cTL - tl;
-                if (dTL.sqrMagnitude > 0.0001f) { totalPush += dTL; outsideCount++; }
-
-                Vector2 cTR = confinerCollider.ClosestPoint(tr);
-                Vector2 dTR = cTR - tr;
-                if (dTR.sqrMagnitude > 0.0001f) { totalPush += dTR; outsideCount++; }
-
-                if (outsideCount == 0) break; // All corners inside — done
-
-                // Use the maximum absolute push per axis for stable convergence
-                Vector2 maxPush = Vector2.zero;
-                Vector2[] diffs = { dBL, dBR, dTL, dTR };
-                foreach (Vector2 d in diffs)
-                {
-                    if (Mathf.Abs(d.x) > Mathf.Abs(maxPush.x)) maxPush.x = d.x;
-                    if (Mathf.Abs(d.y) > Mathf.Abs(maxPush.y)) maxPush.y = d.y;
-                }
-
-                if (maxPush.sqrMagnitude < 0.0001f) break;
-
-                pos.x += maxPush.x;
-                pos.y += maxPush.y;
-            }
-        }
-        else
-        {
-            // No screen-edge confinement: just clamp the camera center point
-            Vector2 center2D = new Vector2(pos.x, pos.y);
-            Vector2 closestCenter = confinerCollider.ClosestPoint(center2D);
-            Vector2 centerDiff = closestCenter - center2D;
-            if (centerDiff.sqrMagnitude > 0.0001f)
-            {
-                pos.x = closestCenter.x;
-                pos.y = closestCenter.y;
-            }
-        }
+        pos.x = boundMinX > boundMaxX ? b.center.x : Mathf.Clamp(pos.x, boundMinX, boundMaxX);
+        pos.y = boundMinY > boundMaxY ? b.center.y : Mathf.Clamp(pos.y, boundMinY, boundMaxY);
 
         return pos;
     }

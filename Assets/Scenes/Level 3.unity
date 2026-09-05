@@ -2354,6 +2354,8 @@ MonoBehaviour:
   unselectedScaleMultiplier: 0.95
   scaleLerpSpeed: 10
   moveRepeatDelay: 0.22
+  buttonWobbleSpeed: 4
+  buttonWobbleAngle: 2
 --- !u!1 &84911012
 GameObject:
   m_ObjectHideFlags: 0
@@ -2366,7 +2368,7 @@ GameObject:
   - component: {fileID: 84911015}
   m_Layer: 0
   m_Name: Confiner
-  m_TagString: Untagged
+  m_TagString: Confiner
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
@@ -2551,13 +2553,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 130246790}
   fireflyLight: {fileID: 1308434559}
   minimumGlow: 0.5
@@ -3062,13 +3057,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 270742420}
   fireflyLight: {fileID: 696329289}
   minimumGlow: 0.5
@@ -3293,13 +3281,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 299911779}
   fireflyLight: {fileID: 669593963}
   minimumGlow: 0.5
@@ -3642,6 +3623,8 @@ MonoBehaviour:
       m_Action: Reset
       m_Flags: 0
     m_Flags: 0
+  winPromptTMP: {fileID: 0}
+  winPromptLegacyText: {fileID: 441085047}
   statsPulseSpeed: 3.5
   statsPulseAmount: 0.12
   statsWobbleSpeed: 5
@@ -8216,6 +8199,8 @@ MonoBehaviour:
   unselectedScaleMultiplier: 0.8
   scaleLerpSpeed: 10
   moveRepeatDelay: 0.22
+  buttonWobbleSpeed: 4
+  buttonWobbleAngle: 2
 --- !u!1 &643114018
 GameObject:
   m_ObjectHideFlags: 0
@@ -11098,13 +11083,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 783282673}
   fireflyLight: {fileID: 911371919}
   minimumGlow: 0.5
@@ -11238,13 +11216,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 800684357}
   fireflyLight: {fileID: 138467883}
   minimumGlow: 0.5
@@ -11655,8 +11626,7 @@ MonoBehaviour:
       MinSecondsBetweenUpdates: 0
       MaxSecondsBetweenUpdates: 0
     m_InternalValue: 0
-  finishWindowDuration: 40
-  finishWindowTimer:
+  playAgainReadyCount:
     UpdateTraits:
       MinSecondsBetweenUpdates: 0
       MaxSecondsBetweenUpdates: 0
@@ -11736,13 +11706,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 986633355}
   fireflyLight: {fileID: 504685057}
   minimumGlow: 0.5
@@ -11915,8 +11878,9 @@ RectTransform:
   - {fileID: 4273692942235112732}
   - {fileID: 427856371901043437}
   - {fileID: 6166509792983711173}
-  - {fileID: 5673897905443786234}
   - {fileID: 5528708899112100081}
+  - {fileID: 6049808577565145683}
+  - {fileID: 7630773519919735331}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
@@ -12143,13 +12107,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1195509989}
   fireflyLight: {fileID: 583488599}
   minimumGlow: 0.5
@@ -12283,13 +12240,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1215372144}
   fireflyLight: {fileID: 1524882759}
   minimumGlow: 0.5
@@ -13747,13 +13697,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1614628875}
   fireflyLight: {fileID: 1170104374}
   minimumGlow: 0.5
@@ -14563,13 +14506,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 1945968958}
   fireflyLight: {fileID: 1409188897}
   minimumGlow: 0.5
@@ -15391,6 +15327,24 @@ SpriteRenderer:
   m_SpriteTileMode: 0
   m_WasSpriteAssigned: 1
   m_SpriteSortPoint: 0
+--- !u!1 &1043385090995334963
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 7630773519919735331}
+  - component: {fileID: 1691804032880749717}
+  - component: {fileID: 6393265750962466222}
+  m_Layer: 5
+  m_Name: WinTimer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
 --- !u!222 &1287852931024055376
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -15399,36 +15353,6 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5430112394415592212}
   m_CullTransparentMesh: 1
---- !u!114 &1409536340340902809
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2333944674530271963}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
-  m_Material: {fileID: 0}
-  m_Color: {r: 0, g: 0, b: 0, a: 1}
-  m_RaycastTarget: 1
-  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
-  m_Maskable: 1
-  m_OnCullStateChanged:
-    m_PersistentCalls:
-      m_Calls: []
-  m_Sprite: {fileID: 6392844663943203734, guid: f15b1c42b7bcd4e4997d8cc861cd4d79, type: 3}
-  m_Type: 0
-  m_PreserveAspect: 0
-  m_FillCenter: 1
-  m_FillMethod: 4
-  m_FillAmount: 1
-  m_FillClockwise: 1
-  m_FillOrigin: 0
-  m_UseSpriteMesh: 0
-  m_PixelsPerUnitMultiplier: 1
 --- !u!95 &1509043451790021529
 Animator:
   serializedVersion: 7
@@ -15477,6 +15401,14 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
+--- !u!222 &1691804032880749717
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1043385090995334963}
+  m_CullTransparentMesh: 1
 --- !u!224 &1774900419958869923
 RectTransform:
   m_ObjectHideFlags: 0
@@ -15496,6 +15428,40 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 1920, y: 100}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &1941896153725250484
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6930600622748105531}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5f7201a12d95ffc409449d95f23cf332, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Text
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_FontData:
+    m_Font: {fileID: 12800000, guid: 626220b2ba4bd054c93bffba62dff281, type: 3}
+    m_FontSize: 120
+    m_FontStyle: 0
+    m_BestFit: 1
+    m_MinSize: 1
+    m_MaxSize: 120
+    m_Alignment: 4
+    m_AlignByGeometry: 0
+    m_RichText: 1
+    m_HorizontalOverflow: 0
+    m_VerticalOverflow: 0
+    m_LineSpacing: 1
+  m_Text: Loading...
 --- !u!1 &1991778439537186704
 GameObject:
   m_ObjectHideFlags: 0
@@ -15531,24 +15497,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!1 &2333944674530271963
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 5673897905443786234}
-  - component: {fileID: 8305094764568555068}
-  - component: {fileID: 1409536340340902809}
-  m_Layer: 5
-  m_Name: CircleTransition
-  m_TagString: Transition
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 0
 --- !u!1 &2399713009141088560
 GameObject:
   m_ObjectHideFlags: 0
@@ -15639,6 +15587,33 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2399713009141088560}
   m_CullTransparentMesh: 1
+--- !u!222 &3443167358511513281
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7740354354520417430}
+  m_CullTransparentMesh: 1
+--- !u!224 &3610601553440797998
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6930600622748105531}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 6049808577565145683}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 500, y: 120}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!222 &3817262902247648329
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -15655,6 +15630,36 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1668281677497648289}
   m_CullTransparentMesh: 1
+--- !u!114 &3912710703615009053
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7740354354520417430}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
+  m_Material: {fileID: 0}
+  m_Color: {r: 0, g: 0, b: 0, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 7482667652216324306, guid: 48e93eef0688c4a259cb0eddcd8661f7, type: 3}
+  m_Type: 0
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
 --- !u!114 &4027010810049651725
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -15806,6 +15811,14 @@ MonoBehaviour:
   - {x: 0.5, y: -0.5, z: 0}
   - {x: 0.5, y: 0.5, z: 0}
   - {x: -0.5, y: 0.5, z: 0}
+--- !u!222 &4548441862463027647
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 6930600622748105531}
+  m_CullTransparentMesh: 1
 --- !u!114 &4612760582050054312
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16118,25 +16131,6 @@ Transform:
   m_Children: []
   m_Father: {fileID: 4308707713688518561}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 140}
---- !u!224 &5673897905443786234
-RectTransform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2333944674530271963}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0, y: 0, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 1107535527}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 0}
-  m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 0, y: 0}
-  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &5708940541383896529
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16230,13 +16224,6 @@ MonoBehaviour:
   flowerDetectionRadius: 4
   minimumSitTime: 2
   maximumSitTime: 4
-  canSitOnUIButtons: 0
-  glow: {fileID: 0}
-  glowSprite: {fileID: 0}
-  buttonChance: 0.2
-  buttonDetectionRadius: 5
-  buttonLandingOffset: 0.15
-  uiCamera: {fileID: 0}
   fireflySprite: {fileID: 6208955895474127088}
   fireflyLight: {fileID: 4505203859472160693}
   minimumGlow: 0.5
@@ -16301,6 +16288,26 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5118409054309482713}
   m_CullTransparentMesh: 1
+--- !u!224 &6049808577565145683
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7740354354520417430}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children:
+  - {fileID: 3610601553440797998}
+  m_Father: {fileID: 1107535527}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!224 &6166509792983711173
 RectTransform:
   m_ObjectHideFlags: 0
@@ -16387,6 +16394,40 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 4153781041096920786}
   m_CullTransparentMesh: 1
+--- !u!114 &6393265750962466222
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1043385090995334963}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5f7201a12d95ffc409449d95f23cf332, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Text
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 1}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_FontData:
+    m_Font: {fileID: 12800000, guid: 626220b2ba4bd054c93bffba62dff281, type: 3}
+    m_FontSize: 100
+    m_FontStyle: 0
+    m_BestFit: 1
+    m_MinSize: 1
+    m_MaxSize: 100
+    m_Alignment: 4
+    m_AlignByGeometry: 0
+    m_RichText: 1
+    m_HorizontalOverflow: 0
+    m_VerticalOverflow: 0
+    m_LineSpacing: 1
+  m_Text: 
 --- !u!114 &6399437667603949887
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16482,6 +16523,24 @@ MonoBehaviour:
     m_VerticalOverflow: 0
     m_LineSpacing: 1
   m_Text: Keep
+--- !u!1 &6930600622748105531
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 3610601553440797998}
+  - component: {fileID: 4548441862463027647}
+  - component: {fileID: 1941896153725250484}
+  m_Layer: 5
+  m_Name: Loading
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
 --- !u!114 &6935421928632834547
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -16620,14 +16679,43 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!222 &8305094764568555068
-CanvasRenderer:
+--- !u!224 &7630773519919735331
+RectTransform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2333944674530271963}
-  m_CullTransparentMesh: 1
+  m_GameObject: {fileID: 1043385090995334963}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1107535527}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0.5, y: 0}
+  m_AnchorMax: {x: 0.5, y: 0}
+  m_AnchoredPosition: {x: 0, y: 40}
+  m_SizeDelta: {x: 1920, y: 80}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &7740354354520417430
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 6049808577565145683}
+  - component: {fileID: 3443167358511513281}
+  - component: {fileID: 3912710703615009053}
+  m_Layer: 5
+  m_Name: Transition
+  m_TagString: Transition
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 0
 --- !u!1 &8471751446909961449
 GameObject:
   m_ObjectHideFlags: 0
