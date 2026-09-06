@@ -14,6 +14,10 @@ public class FinishLine : MonoBehaviour
     [SerializeField] private GameObject timeIsLessPanel;
     [SerializeField] private InputAction resetAction;
 
+    [Header("Celebration / Win Particle Effect (Inspector Assignment)")]
+    [SerializeField] private GameObject winParticleEffect;
+    [SerializeField] private float particleLifetime = 3.0f;
+
     [Header("Dynamic Win Prompt Text UI (Inspector References)")]
     [SerializeField] private TextMeshProUGUI winPromptTMP;
     [SerializeField] private Text winPromptLegacyText;
@@ -25,6 +29,7 @@ public class FinishLine : MonoBehaviour
     [SerializeField] private float statsWobbleAngle = 4.0f;
 
     public static bool LocalPlayerHasWon { get; private set; } = false;
+    public static FinishLine Instance { get; private set; }
 
     private bool hasWon = false;
     private bool isTransitioningNext = false;
@@ -34,8 +39,14 @@ public class FinishLine : MonoBehaviour
     private readonly Dictionary<Transform, Vector3> statsInitialScales = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Transform, Quaternion> statsInitialRotations = new Dictionary<Transform, Quaternion>();
 
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     private void Start()
     {
+        Instance = this;
         hasWon = false;
         LocalPlayerHasWon = false;
         isTransitioningNext = false;
@@ -179,30 +190,29 @@ public class FinishLine : MonoBehaviour
 
     public GameObject GetWinPanelInScene()
     {
-        if (winPanel != null && winPanel.scene.isLoaded) return winPanel;
+        if (winPanel != null && winPanel.scene.isLoaded && winPanel.GetComponentInParent<Canvas>() != null && winPanel != gameObject)
+        {
+            return winPanel;
+        }
 
+        winPanel = null;
+
+        // Search ONLY for UI GameObjects that belong to a Canvas and have a CanvasRenderer
         foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
         {
-            if (go.scene.isLoaded &&
-                (go.CompareTag("Winning") ||
-                 go.CompareTag("Win") ||
-                 go.name.Equals("WinningScene", StringComparison.OrdinalIgnoreCase) ||
-                 go.name.Equals("WinPanel", StringComparison.OrdinalIgnoreCase)))
+            if (go.scene.isLoaded && go != gameObject && go.GetComponentInParent<Canvas>() != null && go.GetComponent<Collider2D>() == null)
             {
-                winPanel = go;
-                return go;
+                string n = go.name.ToLower();
+                if (go.CompareTag("Winning") || n.Equals("winningscene") || n.Equals("winpanel") || n.Contains("winning") || n.Equals("winui"))
+                {
+                    winPanel = go;
+                    return go;
+                }
             }
         }
 
         GameObject tagged = GameObject.FindGameObjectWithTag("Winning");
-        if (tagged != null)
-        {
-            winPanel = tagged;
-            return tagged;
-        }
-
-        tagged = GameObject.FindGameObjectWithTag("Win");
-        if (tagged != null)
+        if (tagged != null && tagged != gameObject && tagged.GetComponentInParent<Canvas>() != null)
         {
             winPanel = tagged;
             return tagged;
@@ -213,18 +223,70 @@ public class FinishLine : MonoBehaviour
 
     public GameObject GetTimeIsLessPanelInScene()
     {
-        if (timeIsLessPanel != null && timeIsLessPanel.scene.isLoaded) return timeIsLessPanel;
+        if (timeIsLessPanel != null && timeIsLessPanel.scene.isLoaded && timeIsLessPanel.GetComponentInParent<Canvas>() != null && timeIsLessPanel != gameObject)
+        {
+            return timeIsLessPanel;
+        }
+
+        timeIsLessPanel = null;
 
         foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
         {
-            if (go.scene.isLoaded && (go.CompareTag("TimeIsLess") || go.name.Equals("TimeIsLessPanel", StringComparison.OrdinalIgnoreCase) || go.name.Contains("TimeIsLess", StringComparison.OrdinalIgnoreCase)))
+            if (go.scene.isLoaded && go != gameObject && go.GetComponentInParent<Canvas>() != null && go.GetComponent<Collider2D>() == null)
             {
-                timeIsLessPanel = go;
-                return go;
+                string n = go.name.ToLower();
+                if (go.CompareTag("TimeIsLess") || n.Equals("timeislesspanel") || n.Contains("timeisless"))
+                {
+                    timeIsLessPanel = go;
+                    return go;
+                }
             }
         }
 
         return null;
+    }
+
+    public static void PlayWinParticlesGlobal(Vector3 position)
+    {
+        if (Instance != null)
+        {
+            Instance.PlayWinParticles(position);
+        }
+    }
+
+    public void PlayWinParticles(Vector3 fallbackPosition)
+    {
+        if (winParticleEffect == null)
+        {
+            winParticleEffect = Resources.Load<GameObject>("WinPop");
+            if (winParticleEffect == null)
+            {
+                winParticleEffect = Resources.Load<GameObject>("Prefabs/WinPop");
+            }
+        }
+
+        if (winParticleEffect != null)
+        {
+            Vector3 finishLineSpawnPos = new Vector3(transform.position.x, transform.position.y, -1.0f);
+            Quaternion spawnRot = winParticleEffect.transform.rotation;
+
+            GameObject spawnedFX = Instantiate(winParticleEffect, finishLineSpawnPos, spawnRot);
+            spawnedFX.SetActive(true);
+
+            ParticleSystem[] pss = spawnedFX.GetComponentsInChildren<ParticleSystem>(true);
+            foreach (var ps in pss)
+            {
+                ps.gameObject.SetActive(true);
+                ParticleSystemRenderer rend = ps.GetComponent<ParticleSystemRenderer>();
+                if (rend != null)
+                {
+                    rend.sortingOrder = 300;
+                }
+                ps.Clear();
+                ps.Play(true);
+            }
+            Destroy(spawnedFX, particleLifetime);
+        }
     }
 
     private void TriggerWinLocal(Transform winnerTransform, float elapsedTimeSeconds, int deaths)
@@ -233,6 +295,9 @@ public class FinishLine : MonoBehaviour
         LocalPlayerHasWon = true;
         isTransitioningNext = false;
         localPlayerTransform = winnerTransform;
+
+        // Play Win Particle System at Finish Line place
+        PlayWinParticles(transform.position);
 
         if (LeaderboardManager.Instance != null)
         {
@@ -250,7 +315,7 @@ public class FinishLine : MonoBehaviour
         {
             winUI.SetActive(true);
             PopulateWinStatsUI(winUI, elapsedTimeSeconds, deaths);
-            UpdateReadyPromptText("PRESS 'R' OR [A] BUTTON TO LOAD NEXT LEVEL!");
+            UpdateReadyPromptText("PRESS [SPACE] / [R] / (A) FOR NEXT LEVEL!");
 
             Button nextBtn = winUI.GetComponentInChildren<Button>(true);
             if (nextBtn != null)

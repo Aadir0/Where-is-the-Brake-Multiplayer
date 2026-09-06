@@ -12,7 +12,8 @@ public class CameraFollow : MonoBehaviour
 
     [Header("Follow Settings")]
     public float smoothSpeed = 10f;
-    public float lookaheadFactor = 0.15f;
+    public float lookaheadFactor = 0.25f;
+    public float lookaheadDamping = 5f;
     public bool lookAtTarget = false;
 
     [Header("Camera Confiner Bounds")]
@@ -34,11 +35,14 @@ public class CameraFollow : MonoBehaviour
 
     private float shakeTimer = 0f;
     private float currentShakeIntensity = 0f;
+    private Vector2 currentLookahead = Vector2.zero;
 
     public void SetTarget(Transform newTarget)
     {
         target = newTarget;
         targetRb = target != null ? target.GetComponent<Rigidbody2D>() : null;
+        currentLookahead = Vector2.zero;
+        StopShake();
         if (target != null)
         {
             Vector3 desiredPos = target.position + offset;
@@ -48,14 +52,9 @@ public class CameraFollow : MonoBehaviour
 
     private void Awake()
     {
-        if (Instance != null && Instance != this)
-        {
-            Destroy(gameObject);
-            return;
-        }
-
         Instance = this;
         cam = GetComponent<Camera>();
+        StopShake();
     }
 
     private void OnEnable()
@@ -70,6 +69,8 @@ public class CameraFollow : MonoBehaviour
 
     private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
     {
+        StopShake();
+
         if (scene.name.Equals("Ending", StringComparison.OrdinalIgnoreCase) || scene.name.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
             target = null;
@@ -93,6 +94,7 @@ public class CameraFollow : MonoBehaviour
 
     private void Start()
     {
+        StopShake();
         if (cam == null) cam = GetComponent<Camera>();
         FindTargetByTag();
         FindConfinerInScene();
@@ -103,6 +105,12 @@ public class CameraFollow : MonoBehaviour
             Vector3 desiredPos = target.position + offset;
             transform.position = new Vector3(desiredPos.x, desiredPos.y, transform.position.z);
         }
+    }
+
+    public void StopShake()
+    {
+        shakeTimer = 0f;
+        currentShakeIntensity = 0f;
     }
 
     public void TriggerShake()
@@ -178,22 +186,43 @@ public class CameraFollow : MonoBehaviour
             }
         }
 
-        if (cars.Length > 0 && target == null)
+        // Singleplayer only fallback (never lock onto other players in multiplayer)
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
         {
-            SetTarget(cars[0].transform);
-        }
-        else if (players.Length > 0 && target == null)
-        {
-            SetTarget(players[0].transform);
+            if (cars.Length > 0 && target == null)
+            {
+                SetTarget(cars[0].transform);
+            }
+            else if (players.Length > 0 && target == null)
+            {
+                SetTarget(players[0].transform);
+            }
         }
     }
 
     private void LateUpdate()
     {
+        if (CameraZoom2D.Instance != null && CameraZoom2D.Instance.IsZooming)
+        {
+            return;
+        }
+
         if (target == null)
         {
             FindTargetByTag();
             if (target == null) return;
+        }
+
+        // In multiplayer, ensure camera NEVER follows opponent's car
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            NetworkObject netObj = target.GetComponent<NetworkObject>();
+            if (netObj != null && !netObj.IsOwner && !netObj.IsLocalPlayer)
+            {
+                target = null;
+                FindTargetByTag();
+                if (target == null) return;
+            }
         }
 
         if (targetRb == null && target != null)
@@ -206,10 +235,16 @@ public class CameraFollow : MonoBehaviour
         // Velocity lookahead for smooth dynamic camera anticipation
         if (targetRb != null && lookaheadFactor > 0f)
         {
-            Vector2 vel = targetRb.linearVelocity;
-            desiredPosition.x += vel.x * lookaheadFactor;
-            desiredPosition.y += vel.y * lookaheadFactor;
+            Vector2 targetLookahead = targetRb.linearVelocity * lookaheadFactor;
+            currentLookahead = Vector2.Lerp(currentLookahead, targetLookahead, 1f - Mathf.Exp(-lookaheadDamping * Time.deltaTime));
         }
+        else
+        {
+            currentLookahead = Vector2.Lerp(currentLookahead, Vector2.zero, 1f - Mathf.Exp(-lookaheadDamping * Time.deltaTime));
+        }
+
+        desiredPosition.x += currentLookahead.x;
+        desiredPosition.y += currentLookahead.y;
 
         // Framerate-independent exponential smoothing
         float blendFactor = 1f - Mathf.Exp(-smoothSpeed * Time.deltaTime);
@@ -272,6 +307,130 @@ public class CameraFollow : MonoBehaviour
             return pos;
         }
 
+        // PolygonCollider2D / CompositeCollider2D geometric boundary solver
+        if (confinerCollider is PolygonCollider2D poly || confinerCollider is CompositeCollider2D)
+        {
+            // Initial AABB clamp to prevent runaway extrapolation
+            Bounds polyBounds = confinerCollider.bounds;
+            pos.x = Mathf.Clamp(pos.x, polyBounds.min.x, polyBounds.max.x);
+            pos.y = Mathf.Clamp(pos.y, polyBounds.min.y, polyBounds.max.y);
+
+            // 1. Center containment check
+            if (!confinerCollider.OverlapPoint(pos))
+            {
+                Vector2 closest = confinerCollider.ClosestPoint(pos);
+                pos.x = closest.x;
+                pos.y = closest.y;
+            }
+
+            // 2. Viewport Screen Edge confinement for polygon geometry
+            if (confineScreenEdges && cam != null && cam.orthographic && halfWidth > 0f && halfHeight > 0f)
+            {
+                // Multi-pass directional boundary relaxation
+                for (int pass = 0; pass < 5; pass++)
+                {
+                    float shiftLeft = 0f;
+                    float shiftRight = 0f;
+                    float shiftBottom = 0f;
+                    float shiftTop = 0f;
+
+                    // Sample along left edge
+                    for (float f = -1f; f <= 1f; f += 0.5f)
+                    {
+                        Vector2 pt = new Vector2(pos.x - halfWidth, pos.y + (f * halfHeight));
+                        if (!confinerCollider.OverlapPoint(pt))
+                        {
+                            Vector2 cl = confinerCollider.ClosestPoint(pt);
+                            float diff = cl.x - pt.x;
+                            if (diff > 0f) shiftLeft = Mathf.Max(shiftLeft, diff);
+                        }
+                    }
+
+                    // Sample along right edge
+                    for (float f = -1f; f <= 1f; f += 0.5f)
+                    {
+                        Vector2 pt = new Vector2(pos.x + halfWidth, pos.y + (f * halfHeight));
+                        if (!confinerCollider.OverlapPoint(pt))
+                        {
+                            Vector2 cl = confinerCollider.ClosestPoint(pt);
+                            float diff = pt.x - cl.x;
+                            if (diff > 0f) shiftRight = Mathf.Max(shiftRight, diff);
+                        }
+                    }
+
+                    // Sample along bottom edge
+                    for (float f = -1f; f <= 1f; f += 0.5f)
+                    {
+                        Vector2 pt = new Vector2(pos.x + (f * halfWidth), pos.y - halfHeight);
+                        if (!confinerCollider.OverlapPoint(pt))
+                        {
+                            Vector2 cl = confinerCollider.ClosestPoint(pt);
+                            float diff = cl.y - pt.y;
+                            if (diff > 0f) shiftBottom = Mathf.Max(shiftBottom, diff);
+                        }
+                    }
+
+                    // Sample along top edge
+                    for (float f = -1f; f <= 1f; f += 0.5f)
+                    {
+                        Vector2 pt = new Vector2(pos.x + (f * halfWidth), pos.y + halfHeight);
+                        if (!confinerCollider.OverlapPoint(pt))
+                        {
+                            Vector2 cl = confinerCollider.ClosestPoint(pt);
+                            float diff = pt.y - cl.y;
+                            if (diff > 0f) shiftTop = Mathf.Max(shiftTop, diff);
+                        }
+                    }
+
+                    // Apply horizontal correction
+                    if (shiftLeft > 0f && shiftRight > 0f)
+                    {
+                        // Corridor narrower than camera: center between walls
+                        pos.x += (shiftLeft - shiftRight) * 0.5f;
+                    }
+                    else if (shiftLeft > 0f)
+                    {
+                        pos.x += shiftLeft;
+                    }
+                    else if (shiftRight > 0f)
+                    {
+                        pos.x -= shiftRight;
+                    }
+
+                    // Apply vertical correction
+                    if (shiftBottom > 0f && shiftTop > 0f)
+                    {
+                        // Corridor shorter than camera: center between walls
+                        pos.y += (shiftBottom - shiftTop) * 0.5f;
+                    }
+                    else if (shiftBottom > 0f)
+                    {
+                        pos.y += shiftBottom;
+                    }
+                    else if (shiftTop > 0f)
+                    {
+                        pos.y -= shiftTop;
+                    }
+
+                    if (shiftLeft <= 0.001f && shiftRight <= 0.001f && shiftBottom <= 0.001f && shiftTop <= 0.001f)
+                    {
+                        break;
+                    }
+                }
+
+                // Ensure center never leaves polygon
+                if (!confinerCollider.OverlapPoint(pos))
+                {
+                    Vector2 closest = confinerCollider.ClosestPoint(pos);
+                    pos.x = closest.x;
+                    pos.y = closest.y;
+                }
+            }
+
+            return pos;
+        }
+
+        // Standard Box / Axis-Aligned Collider Bounds
         Bounds b = confinerCollider.bounds;
         float boundMinX = b.min.x + (confineScreenEdges ? halfWidth : 0f);
         float boundMaxX = b.max.x - (confineScreenEdges ? halfWidth : 0f);
@@ -291,6 +450,25 @@ public class CameraFollow : MonoBehaviour
         if (cam == null) cam = GetComponent<Camera>();
         FindConfinerInScene();
         UpdateBoundsFromCollider();
+
+        if (confinerCollider is PolygonCollider2D poly)
+        {
+            Gizmos.color = Color.green;
+            Transform t = poly.transform;
+            for (int pathIdx = 0; pathIdx < poly.pathCount; pathIdx++)
+            {
+                Vector2[] pts = poly.GetPath(pathIdx);
+                for (int i = 0; i < pts.Length; i++)
+                {
+                    Vector3 p1 = t.TransformPoint(pts[i]);
+                    Vector3 p2 = t.TransformPoint(pts[(i + 1) % pts.Length]);
+                    p1.z = transform.position.z;
+                    p2.z = transform.position.z;
+                    Gizmos.DrawLine(p1, p2);
+                }
+            }
+            return;
+        }
 
         Gizmos.color = Color.cyan;
         Vector3 center = new Vector3((minX + maxX) * 0.5f, (minY + maxY) * 0.5f, transform.position.z);

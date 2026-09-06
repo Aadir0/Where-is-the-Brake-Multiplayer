@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using TMPro;
 
@@ -21,9 +22,11 @@ public class CarHealth : NetworkBehaviour
     [SerializeField] private AudioClip deathSound;
     [SerializeField] private Vector3 deathPrefabOffset = Vector3.zero;
 
-    [Header("Death Camera Shake")]
+    [Header("Death Camera Shake & Hit-Stop")]
     [SerializeField] private float deathShakeDuration = 0.4f;
     [SerializeField] private float deathShakeIntensity = 0.5f;
+    [SerializeField] private float hitStopDuration = 0.05f;
+    [SerializeField] private float hitStopTimeScale = 0.25f;
 
     public bool isInvulnerableDuringSpawn { get => false; set { } } // Always false — no spawn invulnerability
     public bool IsOverlappingHole => isOverlappingHole;
@@ -36,9 +39,11 @@ public class CarHealth : NetworkBehaviour
     private Collider2D carCollider;
     private NetworkCarController carController;
     private Coroutine enableRestartCoroutine;
+    private Coroutine hitStopCoroutine;
     private bool isOverlappingHole = false;
     private bool localDeathRequested = false;
     private bool deathResponseApplied = false;
+    private bool isRestartInteractable = false;
     private float spawnGraceTimer = 0.6f;
 
     // Exposed so NetworkCarController can stop driving the car the INSTANT the owner locally detects
@@ -74,6 +79,7 @@ public class CarHealth : NetworkBehaviour
         {
             currentHealth.Value = maxHealth;
             isDead.Value = false;
+            deathCount.Value = 0;
         }
 
         // Hide Dead UI initially
@@ -86,6 +92,7 @@ public class CarHealth : NetworkBehaviour
         deathResponseApplied = false;
         isOverlappingHole = false;
         spawnGraceTimer = 0.6f;
+        if (CameraFollow.Instance != null) CameraFollow.Instance.StopShake();
         HandleRespawnVisuals();
         HideDeadUI();
     }
@@ -94,6 +101,36 @@ public class CarHealth : NetworkBehaviour
     {
         currentHealth.OnValueChanged -= OnHealthChanged;
         isDead.OnValueChanged -= OnDeadStateChanged;
+        Time.timeScale = 1.0f;
+    }
+
+    private void OnEnable()
+    {
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded += OnSceneLoadedHealth;
+    }
+
+    private void OnDisable()
+    {
+        UnityEngine.SceneManagement.SceneManager.sceneLoaded -= OnSceneLoadedHealth;
+        Time.timeScale = 1.0f;
+    }
+
+    private void OnSceneLoadedHealth(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+    {
+        if (IsServer)
+        {
+            deathCount.Value = 0;
+            currentHealth.Value = maxHealth;
+            isDead.Value = false;
+        }
+
+        ResetLocalSpawnState();
+    }
+
+    public override void OnDestroy()
+    {
+        base.OnDestroy();
+        Time.timeScale = 1.0f;
     }
 
     private void Update()
@@ -102,6 +139,18 @@ public class CarHealth : NetworkBehaviour
         if (activeScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) || activeScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
             return;
+        }
+
+        if (isRestartInteractable && (isDead.Value || localDeathRequested))
+        {
+            Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+            bool retryPressed = (Keyboard.current != null && (Keyboard.current.spaceKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.rKey.wasPressedThisFrame)) ||
+                                (gamepad != null && gamepad.buttonSouth.wasPressedThisFrame);
+            if (retryPressed)
+            {
+                OnRestartButtonClicked();
+                return;
+            }
         }
 
         if (spawnGraceTimer > 0f)
@@ -233,6 +282,7 @@ public class CarHealth : NetworkBehaviour
 
     private void CheckTrapOrHoleContact(Collider2D other)
     {
+        if (spawnGraceTimer > 0f) return;
         if (!IsOwner && !IsLocalPlayer) return;
         if (isDead.Value) return;
         if (localDeathRequested) return;
@@ -399,7 +449,8 @@ public class CarHealth : NetworkBehaviour
 
         if (deathSound != null)
         {
-            AudioSource.PlayClipAtPoint(deathSound, finalSpawnPosition, 1.0f);
+            float sfxVol = AudioManager.Instance != null ? AudioManager.Instance.GetSfxVolume() : 1.0f;
+            AudioSource.PlayClipAtPoint(deathSound, finalSpawnPosition, sfxVol);
         }
 
         if (DeathMarkerManager.Instance != null)
@@ -465,8 +516,25 @@ public class CarHealth : NetworkBehaviour
         if (deathResponseApplied) return;
         deathResponseApplied = true;
 
+        if (IsOwner)
+        {
+            if (hitStopCoroutine != null) StopCoroutine(hitStopCoroutine);
+            hitStopCoroutine = StartCoroutine(HitStopRoutine(hitStopDuration, hitStopTimeScale));
+        }
+
         HandleDeathVisuals();
         ShowDeadUI();
+    }
+
+    private IEnumerator HitStopRoutine(float duration, float slowScale)
+    {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
+        {
+            Time.timeScale = slowScale;
+            yield return new WaitForSecondsRealtime(duration);
+            Time.timeScale = 1.0f;
+        }
+        hitStopCoroutine = null;
     }
 
     private void HandleDeathVisuals()
@@ -513,6 +581,7 @@ public class CarHealth : NetworkBehaviour
 
         if (IsOwner)
         {
+            if (CameraFollow.Instance != null) CameraFollow.Instance.StopShake();
             CameraZoom2D camZoom = Camera.main != null ? Camera.main.GetComponent<CameraZoom2D>() : null;
             if (camZoom != null)
             {
@@ -542,6 +611,36 @@ public class CarHealth : NetworkBehaviour
         {
             deadPanel.SetActive(true);
 
+            // Populate Death UI labels
+            int currentAttempts = deathCount.Value + 1;
+            TextMeshProUGUI[] tmps = deadPanel.GetComponentsInChildren<TextMeshProUGUI>(true);
+            foreach (var t in tmps)
+            {
+                string n = t.gameObject.name.ToLower();
+                if (n.Contains("attempt") || n.Contains("count") || n.Contains("death"))
+                {
+                    t.text = $"ATTEMPTS: {currentAttempts}";
+                }
+                else if (n.Contains("prompt") || n.Contains("hint") || n.Contains("retry"))
+                {
+                    t.text = "PRESS [SPACE] / (A) TO RETRY";
+                }
+            }
+
+            Text[] legacyTexts = deadPanel.GetComponentsInChildren<Text>(true);
+            foreach (var t in legacyTexts)
+            {
+                string n = t.gameObject.name.ToLower();
+                if (n.Contains("attempt") || n.Contains("count") || n.Contains("death"))
+                {
+                    t.text = $"ATTEMPTS: {currentAttempts}";
+                }
+                else if (n.Contains("prompt") || n.Contains("hint") || n.Contains("retry"))
+                {
+                    t.text = "PRESS [SPACE] / (A) TO RETRY";
+                }
+            }
+
             Button btn = deadPanel.GetComponentInChildren<Button>(true);
             if (enableRestartCoroutine != null) StopCoroutine(enableRestartCoroutine);
             enableRestartCoroutine = StartCoroutine(EnableRestartButtonAfterAnimationRoutine(deadPanel, btn));
@@ -550,6 +649,7 @@ public class CarHealth : NetworkBehaviour
 
     private IEnumerator EnableRestartButtonAfterAnimationRoutine(GameObject deadPanel, Button btn)
     {
+        isRestartInteractable = false;
         if (btn != null)
         {
             btn.interactable = false;
@@ -569,8 +669,10 @@ public class CarHealth : NetworkBehaviour
         }
         else
         {
-            yield return new WaitForSecondsRealtime(0.4f);
+            yield return new WaitForSecondsRealtime(0.35f);
         }
+
+        isRestartInteractable = true;
 
         if (btn != null)
         {
@@ -592,6 +694,15 @@ public class CarHealth : NetworkBehaviour
     {
         if (!IsOwner) return;
 
+        isRestartInteractable = false;
+
+        if (hitStopCoroutine != null)
+        {
+            StopCoroutine(hitStopCoroutine);
+            hitStopCoroutine = null;
+            Time.timeScale = 1.0f;
+        }
+
         if (enableRestartCoroutine != null)
         {
             StopCoroutine(enableRestartCoroutine);
@@ -607,6 +718,35 @@ public class CarHealth : NetworkBehaviour
 
     private void OnRestartButtonClicked()
     {
-        RequestRespawnServerRpc();
+        if (!IsOwner && !IsLocalPlayer) return;
+        if (!isDead.Value && !localDeathRequested) return; // Prevent double clicks / re-triggering
+
+        localDeathRequested = false;
+        deathResponseApplied = false;
+        spawnGraceTimer = 0.6f;
+        if (CameraFollow.Instance != null) CameraFollow.Instance.StopShake();
+        HideDeadUI();
+        HandleRespawnVisuals();
+
+        CarRespawn respawnComp = GetComponent<CarRespawn>();
+        if (respawnComp != null)
+        {
+            respawnComp.RespawnCarLocal();
+        }
+
+        if (carController == null) carController = GetComponent<NetworkCarController>();
+        if (carController != null)
+        {
+            carController.ResetCarBoostStateLocal();
+        }
+
+        if (IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            RequestRespawnServerRpc();
+        }
+        else if (IsServer)
+        {
+            ResetHealthAndStateServer();
+        }
     }
 }

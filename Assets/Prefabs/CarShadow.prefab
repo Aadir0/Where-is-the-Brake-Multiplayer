@@ -104,9 +104,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6444d144ff571d74bbeb05ff8f0cfc29, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Shadow
-  shadowScale: 1.15
+  shadowScale: 1.1
   shadowDistance: 0.15
   sideOffset: 0.15
   positionSmoothness: 8
   rotationSmoothness: 6
   rotationAmount: 0.95
+  reflectionDelay: 0.12
+  waterReflectionColor: {r: 0.25, g: 0.78, b: 1, a: 0.55}
+  groundShadowColor: {r: 0, g: 0, b: 0, a: 0.6}
+  waterReflectionMaterial: {fileID: 0}

@@ -23,8 +23,11 @@ public class LeaderboardUI : MonoBehaviour
     [SerializeField] private TextMeshProUGUI topScoresText;
 
     [Header("Interactive Buttons")]
-    [SerializeField] private Button playAgainButton;
+    [SerializeField] private Button quitButton;
     [SerializeField] private Button mainMenuButton;
+
+    // Backward compatibility for existing scene Inspector reference
+    [SerializeField, HideInInspector] private Button playAgainButton;
 
     [Header("Button Scale Animation & Navigation")]
     [SerializeField, Min(1f)] private float selectedScaleMultiplier = 1.12f;
@@ -33,13 +36,14 @@ public class LeaderboardUI : MonoBehaviour
     [SerializeField] private float moveRepeatDelay = 0.22f;
 
     [Header("Grade Badge Animation Settings")]
-    [SerializeField] private float pulseSpeed = 4.0f;
-    [SerializeField] private float pulseAmount = 0.15f;
-    private Vector3 initialGradeScale = Vector3.one;
+    [SerializeField] private float pulseSpeed = 3.5f;
+    [SerializeField] private float pulseAmount = 0.12f;
 
-    private Vector3 playAgainBaseScale = Vector3.one;
+    private Vector3 initialGradeScale = Vector3.one;
+    private Vector3 quitBaseScale = Vector3.one;
     private Vector3 mainMenuBaseScale = Vector3.one;
-    private int selectedIndex = 0; // 0 = Play Again, 1 = Main Menu
+
+    private int selectedIndex = 1; // 0 = Quit, 1 = Main Menu
     private float nextMoveTime = 0f;
     private EventSystem eventSystem;
 
@@ -47,22 +51,6 @@ public class LeaderboardUI : MonoBehaviour
     {
         Instance = this;
         eventSystem = EventSystem.current;
-    }
-
-    private void OnEnable()
-    {
-        if (NetworkRaceManager.Instance != null)
-        {
-            NetworkRaceManager.Instance.OnPlayAgainCountChanged += HandlePlayAgainCountChanged;
-        }
-    }
-
-    private void OnDisable()
-    {
-        if (NetworkRaceManager.Instance != null)
-        {
-            NetworkRaceManager.Instance.OnPlayAgainCountChanged -= HandlePlayAgainCountChanged;
-        }
     }
 
     private void Start()
@@ -85,7 +73,7 @@ public class LeaderboardUI : MonoBehaviour
 
         SetupUIReferences();
         DisplayLeaderboard();
-        SelectButton(0);
+        SelectButton(1);
     }
 
     public void SetupUIReferences()
@@ -140,37 +128,60 @@ public class LeaderboardUI : MonoBehaviour
         if (levelBreakdownText != null) levelBreakdownText.gameObject.SetActive(true);
         if (topScoresText != null) topScoresText.gameObject.SetActive(true);
 
-        // Auto-find buttons if not assigned
-        if (playAgainButton == null || mainMenuButton == null)
+        // Fallback for button references
+        if (quitButton == null)
+        {
+            if (playAgainButton != null)
+            {
+                quitButton = playAgainButton;
+            }
+            else
+            {
+                Button[] foundButtons = GetComponentsInChildren<Button>(true);
+                foreach (var btn in foundButtons)
+                {
+                    string bName = btn.gameObject.name.ToLower();
+                    if ((bName.Contains("quit") || bName.Contains("exit") || bName.Contains("play") || bName.Contains("again")) && quitButton == null)
+                    {
+                        quitButton = btn;
+                    }
+                    else if ((bName.Contains("main") || bName.Contains("menu")) && mainMenuButton == null)
+                    {
+                        mainMenuButton = btn;
+                    }
+                }
+            }
+        }
+
+        if (mainMenuButton == null)
         {
             Button[] foundButtons = GetComponentsInChildren<Button>(true);
             foreach (var btn in foundButtons)
             {
                 string bName = btn.gameObject.name.ToLower();
-                if ((bName.Contains("play") || bName.Contains("restart") || bName.Contains("again")) && playAgainButton == null)
-                {
-                    playAgainButton = btn;
-                }
-                else if ((bName.Contains("main") || bName.Contains("menu")) && mainMenuButton == null)
+                if ((bName.Contains("main") || bName.Contains("menu")) && mainMenuButton == null)
                 {
                     mainMenuButton = btn;
                 }
             }
         }
 
-        if (playAgainButton != null)
+        // Configure Quit Button
+        if (quitButton != null)
         {
-            playAgainBaseScale = playAgainButton.transform.localScale;
-            playAgainButton.onClick.RemoveAllListeners();
-            playAgainButton.onClick.AddListener(OnPlayAgainClicked);
+            quitBaseScale = quitButton.transform.localScale;
+            quitButton.onClick.RemoveAllListeners();
+            quitButton.onClick.AddListener(OnQuitClicked);
 
-            Navigation nav = playAgainButton.navigation;
+            Navigation nav = quitButton.navigation;
             nav.mode = Navigation.Mode.None;
-            playAgainButton.navigation = nav;
+            quitButton.navigation = nav;
 
-            AddPointerEnterCallback(playAgainButton.gameObject, 0);
+            SetButtonText(quitButton, "QUIT GAME");
+            AddPointerEnterCallback(quitButton.gameObject, 0);
         }
 
+        // Configure Main Menu Button
         if (mainMenuButton != null)
         {
             mainMenuBaseScale = mainMenuButton.transform.localScale;
@@ -181,6 +192,7 @@ public class LeaderboardUI : MonoBehaviour
             nav.mode = Navigation.Mode.None;
             mainMenuButton.navigation = nav;
 
+            SetButtonText(mainMenuButton, "MAIN MENU");
             AddPointerEnterCallback(mainMenuButton.gameObject, 1);
         }
 
@@ -189,6 +201,22 @@ public class LeaderboardUI : MonoBehaviour
         if (uiInputModule != null)
         {
             uiInputModule.move = null;
+        }
+    }
+
+    private void SetButtonText(Button btn, string text)
+    {
+        if (btn == null) return;
+        TextMeshProUGUI tmpText = btn.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (tmpText != null)
+        {
+            tmpText.text = text;
+            return;
+        }
+        Text legacyText = btn.GetComponentInChildren<Text>(true);
+        if (legacyText != null)
+        {
+            legacyText.text = text;
         }
     }
 
@@ -209,7 +237,7 @@ public class LeaderboardUI : MonoBehaviour
     {
         if (eventSystem == null) eventSystem = EventSystem.current;
 
-        // Animate Rank Grade Badge
+        // Animate Rank Grade Badge Pulsing
         if (currentGradeText != null)
         {
             float pulse = 1f + (Mathf.Sin(Time.unscaledTime * pulseSpeed) * pulseAmount);
@@ -224,11 +252,11 @@ public class LeaderboardUI : MonoBehaviour
     private void ReadNavigationInput()
     {
         if (Time.unscaledTime < nextMoveTime) return;
-        if (playAgainButton == null && mainMenuButton == null) return;
+        if (quitButton == null && mainMenuButton == null) return;
 
         bool moveTriggered = false;
 
-        // 1. Keyboard Arrow Keys ONLY
+        // 1. Keyboard Arrow Keys
         if (Keyboard.current != null)
         {
             if (Keyboard.current.upArrowKey.wasPressedThisFrame ||
@@ -240,7 +268,7 @@ public class LeaderboardUI : MonoBehaviour
             }
         }
 
-        // 2. Gamepad D-Pad ONLY (Left Stick navigation disabled)
+        // 2. Gamepad D-Pad ONLY
         Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
         if (gamepad != null)
         {
@@ -264,8 +292,8 @@ public class LeaderboardUI : MonoBehaviour
     public void SelectButton(int index)
     {
         selectedIndex = Mathf.Clamp(index, 0, 1);
-        Button targetBtn = (selectedIndex == 0) ? playAgainButton : mainMenuButton;
-        if (targetBtn == null) targetBtn = (selectedIndex == 0) ? mainMenuButton : playAgainButton;
+        Button targetBtn = (selectedIndex == 0) ? quitButton : mainMenuButton;
+        if (targetBtn == null) targetBtn = (selectedIndex == 0) ? mainMenuButton : quitButton;
 
         if (eventSystem != null && targetBtn != null)
         {
@@ -297,7 +325,7 @@ public class LeaderboardUI : MonoBehaviour
         {
             if (selectedIndex == 0)
             {
-                OnPlayAgainClicked();
+                OnQuitClicked();
             }
             else
             {
@@ -309,24 +337,24 @@ public class LeaderboardUI : MonoBehaviour
     private void AnimateButtonScale()
     {
         GameObject selectedObj = eventSystem != null ? eventSystem.currentSelectedGameObject : null;
-        float rotZ = Mathf.Sin(Time.unscaledTime * 4.0f) * 2.0f;
+        float rotZ = Mathf.Sin(Time.unscaledTime * 4.0f) * 1.8f;
 
-        if (playAgainButton != null)
+        if (quitButton != null)
         {
-            bool isSelected = (selectedObj == playAgainButton.gameObject || selectedIndex == 0);
+            bool isSelected = (selectedObj == quitButton.gameObject || selectedIndex == 0);
             Vector3 targetScale = isSelected
-                ? playAgainBaseScale * selectedScaleMultiplier
-                : playAgainBaseScale * unselectedScaleMultiplier;
+                ? quitBaseScale * selectedScaleMultiplier
+                : quitBaseScale * unselectedScaleMultiplier;
 
-            playAgainButton.transform.localScale = Vector3.Lerp(
-                playAgainButton.transform.localScale,
+            quitButton.transform.localScale = Vector3.Lerp(
+                quitButton.transform.localScale,
                 targetScale,
                 Time.unscaledDeltaTime * scaleLerpSpeed
             );
 
-            playAgainButton.transform.localRotation = isSelected
+            quitButton.transform.localRotation = isSelected
                 ? Quaternion.Euler(0f, 0f, rotZ)
-                : Quaternion.Lerp(playAgainButton.transform.localRotation, Quaternion.identity, Time.unscaledDeltaTime * 10f);
+                : Quaternion.Lerp(quitButton.transform.localRotation, Quaternion.identity, Time.unscaledDeltaTime * 10f);
         }
 
         if (mainMenuButton != null)
@@ -361,27 +389,42 @@ public class LeaderboardUI : MonoBehaviour
         TimeSpan totalSpan = TimeSpan.FromSeconds(totalTime);
         string formattedTotalTime = string.Format("{0:D2}:{1:D2}", totalSpan.Minutes, totalSpan.Seconds);
 
+        if (titleText != null)
+        {
+            titleText.text = "<b><color=#00FFA3>───</color> <color=#FFFFFF>FINAL RESULTS & LEADERBOARD</color> <color=#00FFA3>───</color></b>";
+        }
+
         if (currentGradeText != null)
         {
-            currentGradeText.text = $"RANK  [ {grade} ]";
-            switch (grade)
+            string gradeColor = grade switch
             {
-                case "S": currentGradeText.color = new Color(1.0f, 0.85f, 0.15f); break; // Radiant Gold
-                case "A": currentGradeText.color = new Color(0.1f, 1.0f, 0.6f); break;   // Neon Mint
-                case "B": currentGradeText.color = new Color(0.3f, 0.75f, 1.0f); break;  // Sapphire Cyan
-                case "C": currentGradeText.color = new Color(1.0f, 0.6f, 0.2f); break;   // Vivid Orange
-                default:  currentGradeText.color = new Color(0.9f, 0.35f, 0.35f); break; // Coral Crimson
-            }
+                "S" => "#FFD700", // Radiant Gold
+                "A" => "#00FFA3", // Neon Mint
+                "B" => "#00D2FF", // Electric Cyan
+                "C" => "#FF9900", // Vivid Orange
+                _   => "#FF4D6D"  // Crimson Red
+            };
+
+            string gradeComment = grade switch
+            {
+                "S" => "SUPREME DRIFTER",
+                "A" => "MASTER DRIVER",
+                "B" => "SOLID RUNNER",
+                "C" => "SURVIVOR",
+                _   => "NEEDS PRACTICE"
+            };
+
+            currentGradeText.text = $"<size=65%><color=#A0B2C6>OVERALL PERFORMANCE</color></size>\n<size=155%><b><color={gradeColor}>RANK {grade}</color></b></size>\n<size=55%><color=#8892B0>— {gradeComment} —</color></size>";
         }
 
         if (currentSummaryText != null)
         {
-            currentSummaryText.text = $"TIME: {formattedTotalTime}    •    DEATHS: {totalDeaths}";
+            currentSummaryText.text = $"<color=#00FFA3>TOTAL TIME:</color> <b><color=#FFFFFF>{formattedTotalTime}</color></b>     <color=#445566>│</color>     <color=#FF6B6B>TOTAL DEATHS:</color> <b><color=#FFFFFF>{totalDeaths}</color></b>";
         }
 
         if (levelBreakdownText != null)
         {
-            string breakdown = "<color=#FFD700>─── STAGE BREAKDOWN ───</color>\n";
+            string breakdown = "<b><color=#00FFA3>┌─── STAGE BREAKDOWN ───┐</color></b>\n\n";
             var stats = LeaderboardManager.Instance.LevelStats;
             if (stats != null && stats.Count > 0)
             {
@@ -391,23 +434,26 @@ public class LeaderboardUI : MonoBehaviour
                     TimeSpan stSpan = TimeSpan.FromSeconds(st.timeSeconds);
                     string tStr = string.Format("{0:D2}:{1:D2}", stSpan.Minutes, stSpan.Seconds);
                     string statusTag = st.isTimeout
-                        ? "<color=#FF8800>[TIMEOUT]</color>"
-                        : "<color=#00FFA3>[CLEAR]</color>";
+                        ? "<color=#FF4D6D>TIMEOUT</color>"
+                        : "<color=#00FFA3>CLEARED</color>";
 
                     string displayName = !string.IsNullOrEmpty(st.levelName) ? st.levelName.ToUpper() : $"LEVEL {i + 1}";
-                    breakdown += $"{displayName,-7}  {tStr}   {st.deaths} DEATHS   {statusTag}\n";
+                    string deathStr = st.deaths == 0 ? "<color=#00FFA3>0 DEATHS</color>" : $"<color=#FF6B6B>{st.deaths} DEATHS</color>";
+
+                    breakdown += $"<b><color=#FFFFFF>{displayName,-8}</color></b>   <color=#DDEEFA>{tStr}</color>   {deathStr,10}   [{statusTag}]\n";
                 }
             }
             else
             {
-                breakdown += "<color=#888888>No level records available.</color>";
+                breakdown += "<color=#888888>No stage records available.</color>\n";
             }
+            breakdown += "\n<b><color=#00FFA3>└────────────────────────┘</color></b>";
             levelBreakdownText.text = breakdown;
         }
 
         if (topScoresText != null)
         {
-            string topText = "<color=#FFD700>─── HALL OF FAME ───</color>\n";
+            string topText = "<b><color=#FFD700>┌─── BEST RUNS ───┐</color></b>\n\n";
             List<LeaderboardEntry> entries = LeaderboardManager.Instance.GetTopEntries();
             if (entries != null && entries.Count > 0)
             {
@@ -420,92 +466,54 @@ public class LeaderboardUI : MonoBehaviour
 
                     string medal = i switch
                     {
-                        0 => "<color=#FFE84D>1ST</color>",
-                        1 => "<color=#C0C0C0>2ND</color>",
-                        2 => "<color=#CD7F32>3RD</color>",
-                        _ => $"#{i + 1}"
+                        0 => "<color=#FFD700><b>1ST</b></color>",
+                        1 => "<color=#E0E0E0><b>2ND</b></color>",
+                        2 => "<color=#CD7F32><b>3RD</b></color>",
+                        3 => "<color=#7EC8E3><b>4TH</b></color>",
+                        4 => "<color=#A0B2C6><b>5TH</b></color>",
+                        _ => $"<b>{(i + 1)}TH</b>"
                     };
 
                     string gradeColor = entry.grade switch
                     {
-                        "S" => "#FFE84D",
+                        "S" => "#FFD700",
                         "A" => "#00FFA3",
-                        "B" => "#4DA6FF",
-                        _ => "#E0E0E0"
+                        "B" => "#00D2FF",
+                        "C" => "#FF9900",
+                        _   => "#FF4D6D"
                     };
 
-                    topText += $"{medal,-4} <color={gradeColor}>[{entry.grade}]</color>  {eTimeStr}  •  {entry.totalDeaths} DEATHS\n";
+                    string deathsColor = entry.totalDeaths == 0 ? "#00FFA3" : "#FF6B6B";
+
+                    topText += $"{medal}  <color={gradeColor}>[{entry.grade}]</color>  <b><color=#FFFFFF>{eTimeStr}</color></b>  •  <color={deathsColor}>{entry.totalDeaths} DEATHS</color>\n";
                 }
             }
             else
             {
-                topText += "<color=#888888>No best runs recorded yet.</color>";
+                topText += "<color=#888888>No best runs recorded yet.</color>\n";
             }
+            topText += "\n<b><color=#FFD700>└───────────────────┘</color></b>";
             topScoresText.text = topText;
         }
     }
 
-    private void HandlePlayAgainCountChanged(int readyCount, int totalCount)
+    public void OnQuitClicked()
     {
-        if (playAgainButton != null)
+        if (RelayManager.Instance != null)
         {
-            TextMeshProUGUI btnText = playAgainButton.GetComponentInChildren<TextMeshProUGUI>(true);
-            if (btnText != null)
-            {
-                btnText.text = $"READY ({readyCount}/{totalCount})...";
-            }
-            else
-            {
-                Text legacyText = playAgainButton.GetComponentInChildren<Text>(true);
-                if (legacyText != null)
-                {
-                    legacyText.text = $"READY ({readyCount}/{totalCount})...";
-                }
-            }
-        }
-    }
-
-    public void OnPlayAgainClicked()
-    {
-        bool isMultiplayer = Unity.Netcode.NetworkManager.Singleton != null &&
-                             Unity.Netcode.NetworkManager.Singleton.IsListening &&
-                             Unity.Netcode.NetworkManager.Singleton.ConnectedClientsIds.Count > 1;
-
-        if (isMultiplayer)
-        {
-            if (NetworkRaceManager.Instance != null && Unity.Netcode.NetworkManager.Singleton != null)
-            {
-                NetworkRaceManager.Instance.RequestPlayAgainServerRpc(Unity.Netcode.NetworkManager.Singleton.LocalClientId);
-
-                if (playAgainButton != null)
-                {
-                    TextMeshProUGUI btnText = playAgainButton.GetComponentInChildren<TextMeshProUGUI>(true);
-                    if (btnText != null) btnText.text = "WAITING FOR OTHERS...";
-                    Text legacyText = playAgainButton.GetComponentInChildren<Text>(true);
-                    if (legacyText != null) legacyText.text = "WAITING FOR OTHERS...";
-                }
-            }
-            return;
+            RelayManager.Instance.ShutdownSession();
         }
 
-        // Singleplayer:
-        if (LeaderboardManager.Instance != null)
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
-            LeaderboardManager.Instance.ResetRun();
-        }
-        if (LevelTimer.Instance != null)
-        {
-            LevelTimer.Instance.ResetRunTimer();
+            NetworkManager.Singleton.Shutdown();
         }
 
-        if (SceneTransitionManager.Instance != null)
-        {
-            SceneTransitionManager.Instance.LoadSceneWithTransition("Level 1");
-        }
-        else
-        {
-            SceneManager.LoadScene("Level 1");
-        }
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 
     public void OnMainMenuClicked()
@@ -524,9 +532,9 @@ public class LeaderboardUI : MonoBehaviour
             RelayManager.Instance.ShutdownSession();
         }
 
-        if (Unity.Netcode.NetworkManager.Singleton != null && Unity.Netcode.NetworkManager.Singleton.IsListening)
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
-            Unity.Netcode.NetworkManager.Singleton.Shutdown();
+            NetworkManager.Singleton.Shutdown();
         }
 
         if (SceneTransitionManager.Instance != null)

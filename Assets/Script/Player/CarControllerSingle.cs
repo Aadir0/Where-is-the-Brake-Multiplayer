@@ -550,6 +550,11 @@ public class CarControllerSingle : MonoBehaviour
             spawnedJumpEffect = null;
         }
 
+        if (spawnedShadow != null)
+        {
+            spawnedShadow.DisableShadow();
+        }
+
         jumpCoroutine = null;
 
         if (CameraFollow.Instance != null)

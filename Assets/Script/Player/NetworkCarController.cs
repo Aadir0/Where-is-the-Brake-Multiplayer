@@ -410,11 +410,27 @@ public class NetworkCarController : NetworkBehaviour
     private void OnEnable()
     {
         SceneManager.sceneLoaded += OnSceneLoaded;
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.OnSfxVolumeChanged += HandleSfxVolumeChanged;
+        }
     }
 
     private void OnDisable()
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.OnSfxVolumeChanged -= HandleSfxVolumeChanged;
+        }
+    }
+
+    private void HandleSfxVolumeChanged(float newVol)
+    {
+        if (driftAudioSource != null && driftAudioSource.isPlaying)
+        {
+            driftAudioSource.volume = newVol;
+        }
     }
 
     private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -499,9 +515,15 @@ public class NetworkCarController : NetworkBehaviour
         bool isHost = IsServer || (NetworkManager.Singleton != null && OwnerClientId == NetworkManager.ServerClientId) || isHostCarNet.Value;
         int playerIndex = isHost ? 0 : 1;
 
-        if (SpawnPointConfig.Instance != null)
+        SpawnPointConfig config = SpawnPointConfig.Instance;
+        if (config == null || !config.gameObject.scene.isLoaded)
         {
-            spawnPos = SpawnPointConfig.Instance.GetSpawnPosition(playerIndex, out spawnRot);
+            config = UnityEngine.Object.FindFirstObjectByType<SpawnPointConfig>();
+        }
+
+        if (config != null && config.gameObject.scene.isLoaded)
+        {
+            spawnPos = config.GetSpawnPosition(playerIndex, out spawnRot);
             foundSpawn = true;
         }
 
@@ -538,6 +560,12 @@ public class NetworkCarController : NetworkBehaviour
 
         if (rb != null)
         {
+            if (IsOwner || IsLocalPlayer)
+            {
+                rb.simulated = true;
+                rb.bodyType = RigidbodyType2D.Dynamic;
+                rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+            }
             rb.position = spawnPos;
             rb.linearVelocity = Vector2.zero;
             rb.angularVelocity = 0f;
@@ -622,11 +650,6 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        if (FinishLine.LocalPlayerHasWon || hasWonPlayer)
-        {
-            return;
-        }
-
         string currentScene = SceneManager.GetActiveScene().name;
         if (!currentScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
             !currentScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
@@ -663,6 +686,9 @@ public class NetworkCarController : NetworkBehaviour
     {
         hasWonPlayer = true;
         isBoosted = false;
+
+        // Trigger finish line win particle system at winner's location
+        FinishLine.PlayWinParticlesGlobal(transform.position);
 
         if (startPromptVisual != null)
         {
@@ -1129,7 +1155,9 @@ public class NetworkCarController : NetworkBehaviour
 
             if (effectsAudioSource != null && engineStartSound != null)
             {
-                effectsAudioSource.PlayOneShot(engineStartSound);
+                float sfxVol = AudioManager.Instance != null ? AudioManager.Instance.GetSfxVolume() : 0.75f;
+                effectsAudioSource.pitch = 1.0f;
+                effectsAudioSource.PlayOneShot(engineStartSound, sfxVol);
             }
         }
         else
@@ -1162,17 +1190,17 @@ public class NetworkCarController : NetworkBehaviour
         nextJumpTime = Time.time + jumpCooldown;
         canJump = false;
 
+        // Execute jump locally with zero input latency
+        if (jumpCoroutine != null)
+        {
+            StopCoroutine(jumpCoroutine);
+        }
+        jumpCoroutine = StartCoroutine(JumpEffect());
+
+        // Replicate jump to other network peers
         if (IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
             TriggerJumpRpc(SceneManager.GetActiveScene().name);
-        }
-        else
-        {
-            if (jumpCoroutine != null)
-            {
-                StopCoroutine(jumpCoroutine);
-            }
-            jumpCoroutine = StartCoroutine(JumpEffect());
         }
     }
 
@@ -1297,13 +1325,21 @@ public class NetworkCarController : NetworkBehaviour
     {
         float sidewaysVel = GetSidewaysVelocity();
         bool isDrifting = Mathf.Abs(turn) >= 0.35f && Mathf.Abs(sidewaysVel) >= driftThreshold && !isJumping;
+        float sfxVol = AudioManager.Instance != null ? AudioManager.Instance.GetSfxVolume() : 0.75f;
 
         if (isDrifting && driftSound != null)
         {
             if (driftAudioSource != null && (!driftAudioSource.isPlaying || driftAudioSource.clip != driftSound))
             {
                 driftAudioSource.clip = driftSound;
+                // Random variable pitch for drifting (variance 0 to 0.7)
+                driftAudioSource.pitch = Mathf.Clamp(1.0f + UnityEngine.Random.Range(-0.35f, 0.35f), 0.65f, 1.35f);
+                driftAudioSource.volume = sfxVol;
                 driftAudioSource.Play();
+            }
+            else if (driftAudioSource != null)
+            {
+                driftAudioSource.volume = sfxVol;
             }
         }
         else
@@ -1323,6 +1359,8 @@ public class NetworkCarController : NetworkBehaviour
     [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
     private void TriggerJumpRpc(Unity.Collections.FixedString32Bytes sceneName)
     {
+        if (IsOwner || IsLocalPlayer) return;
+
         string localScene = SceneManager.GetActiveScene().name;
         if (!string.Equals(sceneName.ToString(), localScene, StringComparison.OrdinalIgnoreCase))
         {
@@ -1351,7 +1389,10 @@ public class NetworkCarController : NetworkBehaviour
 
         if (effectsAudioSource != null && jumpSound != null)
         {
-            effectsAudioSource.PlayOneShot(jumpSound);
+            float sfxVol = AudioManager.Instance != null ? AudioManager.Instance.GetSfxVolume() : 0.75f;
+            // Random variable pitch for jumping (variance 0 to 0.7)
+            effectsAudioSource.pitch = Mathf.Clamp(1.0f + UnityEngine.Random.Range(-0.35f, 0.35f), 0.65f, 1.35f);
+            effectsAudioSource.PlayOneShot(jumpSound, sfxVol);
         }
 
         if (jumpEffectPrefab != null)

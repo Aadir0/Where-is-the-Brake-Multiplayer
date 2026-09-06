@@ -30,13 +30,16 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private float gamepadDeadzone = 0.5f;
     [SerializeField] private InputSystemUIInputModule uiInputModule;
 
-    [Header("Options Menu & Volume Slider")]
+    [Header("Options Menu & Volume Sliders")]
     [SerializeField] private GameObject OptionMenu;
     [SerializeField] private Button optionBackButton;
     [SerializeField] private Slider musicVolumeSlider;
+    [SerializeField] private Slider sfxVolumeSlider;
 
     private int selectedIndex = 0;
+    private int optionsFocusIndex = 0; // 0 = Music, 1 = SFX, 2 = Back Button
     private float nextMoveTime;
+    private float nextOptionsMoveTime;
     private bool isBusy;
     private bool isOptionMenuOpen;
 
@@ -77,6 +80,7 @@ public class JustAButton : MonoBehaviour
     {
         isOptionMenuOpen = false;
         isBusy = false;
+        optionsFocusIndex = 0;
 
         if (OptionMenu != null)
         {
@@ -88,14 +92,38 @@ public class JustAButton : MonoBehaviour
         selectedIndex = Mathf.Clamp(firstSelectedIndex, 0, Mathf.Max(0, buttons.Count - 1));
         SelectButton(selectedIndex);
 
-        SetupVolumeSlider();
+        SetupVolumeSliders();
     }
 
-    private void SetupVolumeSlider()
+    private void SetupVolumeSliders()
     {
-        if (musicVolumeSlider == null && OptionMenu != null)
+        if (OptionMenu != null)
         {
-            musicVolumeSlider = OptionMenu.GetComponentInChildren<Slider>(true);
+            Slider[] foundSliders = OptionMenu.GetComponentsInChildren<Slider>(true);
+            if (foundSliders != null)
+            {
+                foreach (Slider s in foundSliders)
+                {
+                    string sName = s.gameObject.name.ToLower();
+                    if ((sName.Contains("sfx") || sName.Contains("sound") || sName.Contains("effect")) && sfxVolumeSlider == null)
+                    {
+                        sfxVolumeSlider = s;
+                    }
+                    else if ((sName.Contains("music") || sName.Contains("bgm")) && musicVolumeSlider == null)
+                    {
+                        musicVolumeSlider = s;
+                    }
+                }
+
+                if (musicVolumeSlider == null && foundSliders.Length > 0)
+                {
+                    musicVolumeSlider = foundSliders[0];
+                }
+                if (sfxVolumeSlider == null && foundSliders.Length > 1)
+                {
+                    sfxVolumeSlider = foundSliders[1];
+                }
+            }
         }
 
         if (musicVolumeSlider != null)
@@ -107,6 +135,16 @@ public class JustAButton : MonoBehaviour
             }
             musicVolumeSlider.onValueChanged.AddListener(OnMusicVolumeChanged);
         }
+
+        if (sfxVolumeSlider != null)
+        {
+            sfxVolumeSlider.onValueChanged.RemoveAllListeners();
+            if (AudioManager.Instance != null)
+            {
+                sfxVolumeSlider.value = AudioManager.Instance.GetSfxVolume();
+            }
+            sfxVolumeSlider.onValueChanged.AddListener(OnSfxVolumeChanged);
+        }
     }
 
     private void OnMusicVolumeChanged(float val)
@@ -114,6 +152,14 @@ public class JustAButton : MonoBehaviour
         if (AudioManager.Instance != null)
         {
             AudioManager.Instance.SetMusicVolume(val);
+        }
+    }
+
+    private void OnSfxVolumeChanged(float val)
+    {
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.SetSfxVolume(val);
         }
     }
 
@@ -229,6 +275,7 @@ public class JustAButton : MonoBehaviour
         }
 
         isOptionMenuOpen = true;
+        optionsFocusIndex = 0;
 
         DisableMainButtons();
 
@@ -237,7 +284,7 @@ public class JustAButton : MonoBehaviour
             OptionMenu.SetActive(true);
         }
 
-        SetupVolumeSlider();
+        SetupVolumeSliders();
 
         if (CursorManager.Instance != null)
         {
@@ -336,8 +383,38 @@ public class JustAButton : MonoBehaviour
             }
         }
 
+        // Navigate between options items (0: Music, 1: SFX, 2: Back Button)
+        if (Time.unscaledTime >= nextOptionsMoveTime)
+        {
+            int verticalMove = 0;
+            if (Keyboard.current != null)
+            {
+                if (Keyboard.current.upArrowKey.wasPressedThisFrame || Keyboard.current.wKey.wasPressedThisFrame)
+                    verticalMove = -1;
+                else if (Keyboard.current.downArrowKey.wasPressedThisFrame || Keyboard.current.sKey.wasPressedThisFrame)
+                    verticalMove = 1;
+            }
+
+            if (gamepad != null)
+            {
+                Vector2 dpadVal = gamepad.dpad.ReadValue();
+                Vector2 stickVal = gamepad.leftStick.ReadValue();
+                if (gamepad.dpad.up.wasPressedThisFrame || dpadVal.y >= 0.4f || stickVal.y >= 0.4f)
+                    verticalMove = -1;
+                else if (gamepad.dpad.down.wasPressedThisFrame || dpadVal.y <= -0.4f || stickVal.y <= -0.4f)
+                    verticalMove = 1;
+            }
+
+            if (verticalMove != 0)
+            {
+                int maxItems = sfxVolumeSlider != null ? 3 : 2;
+                optionsFocusIndex = (optionsFocusIndex + verticalMove + maxItems) % maxItems;
+                nextOptionsMoveTime = Time.unscaledTime + 0.2f;
+            }
+        }
+
         // Handle Gamepad / Keyboard Horizontal Slider Control
-        if (musicVolumeSlider != null && Time.unscaledTime >= nextSliderAdjustTime)
+        if (Time.unscaledTime >= nextSliderAdjustTime)
         {
             float horizontal = 0f;
 
@@ -363,8 +440,31 @@ public class JustAButton : MonoBehaviour
             if (Mathf.Abs(horizontal) > 0.1f)
             {
                 float step = 0.05f * Mathf.Sign(horizontal);
-                musicVolumeSlider.value = Mathf.Clamp01(musicVolumeSlider.value + step);
-                nextSliderAdjustTime = Time.unscaledTime + 0.12f;
+
+                // Determine target slider based on focus or availability
+                Slider targetSlider = null;
+                if (optionsFocusIndex == 1 && sfxVolumeSlider != null)
+                {
+                    targetSlider = sfxVolumeSlider;
+                }
+                else if (optionsFocusIndex == 0 && musicVolumeSlider != null)
+                {
+                    targetSlider = musicVolumeSlider;
+                }
+                else if (musicVolumeSlider != null)
+                {
+                    targetSlider = musicVolumeSlider;
+                }
+                else if (sfxVolumeSlider != null)
+                {
+                    targetSlider = sfxVolumeSlider;
+                }
+
+                if (targetSlider != null)
+                {
+                    targetSlider.value = Mathf.Clamp01(targetSlider.value + step);
+                    nextSliderAdjustTime = Time.unscaledTime + 0.12f;
+                }
             }
         }
 

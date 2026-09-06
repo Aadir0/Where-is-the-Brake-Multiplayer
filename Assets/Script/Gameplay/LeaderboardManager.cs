@@ -116,8 +116,54 @@ public class LeaderboardManager : MonoBehaviour
         RecalculateTotals();
     }
 
+    public const float DEFAULT_RUN_DURATION_SECONDS = 300f; // 5 minutes total
+
+    public float GetOverallRunBudgetSeconds()
+    {
+        if (LevelTimer.Instance != null)
+        {
+            return LevelTimer.Instance.OverallRunDurationSeconds;
+        }
+        return DEFAULT_RUN_DURATION_SECONDS;
+    }
+
+    public void DistributeTimeoutLevelTimes()
+    {
+        float totalBudget = GetOverallRunBudgetSeconds();
+        int timeoutCount = 0;
+        float clearedSum = 0f;
+
+        foreach (var stat in levelStats)
+        {
+            if (stat.isTimeout)
+            {
+                timeoutCount++;
+            }
+            else
+            {
+                clearedSum += stat.timeSeconds;
+            }
+        }
+
+        if (timeoutCount > 0)
+        {
+            float remainingTime = Mathf.Max(0f, totalBudget - clearedSum);
+            float distributedPerLevel = remainingTime / timeoutCount;
+
+            foreach (var stat in levelStats)
+            {
+                if (stat.isTimeout)
+                {
+                    stat.timeSeconds = distributedPerLevel;
+                }
+            }
+        }
+    }
+
     private void RecalculateTotals()
     {
+        DistributeTimeoutLevelTimes();
+
         totalRunTime = 0f;
         totalRunDeaths = 0;
         totalRunTimeouts = 0;
@@ -171,7 +217,7 @@ public class LeaderboardManager : MonoBehaviour
                 levelStats.Add(new LevelStatEntry
                 {
                     levelName = lvl,
-                    timeSeconds = 60.0f,
+                    timeSeconds = 0f,
                     deaths = 0,
                     isTimeout = true
                 });

@@ -1,8 +1,9 @@
 fileFormatVersion: 2
-guid: e120eb818b0e0024c8303a721f1d529a
-NativeFormatImporter:
+guid: 82c5789f2142e0b4cb936da7619eb120
+ShaderImporter:
   externalObjects: {}
-  mainObjectFileID: 7400000
+  defaultTextures: []
   userData: 
   assetBundleName: 
   assetBundleVariant: 
+

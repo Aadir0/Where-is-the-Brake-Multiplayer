@@ -25,16 +25,13 @@ public class NetworkRaceManager : NetworkBehaviour
     public NetworkVariable<ulong> winnerClientId = new NetworkVariable<ulong>(9999);
     public NetworkVariable<int> connectedPlayerCount = new NetworkVariable<int>(1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     public NetworkVariable<int> readyPlayerCount = new NetworkVariable<int>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
-    public NetworkVariable<int> playAgainReadyCount = new NetworkVariable<int>(0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     public event Action<RaceState> OnRaceStateChanged;
     public event Action<int> OnCountdownTick;
     public event Action<int> OnPlayerCountChanged;
     public event Action<int, int> OnReadyPlayerCountChanged;
-    public event Action<int, int> OnPlayAgainCountChanged;
 
     private readonly HashSet<ulong> readyPlayersSet = new HashSet<ulong>();
-    private readonly HashSet<ulong> playAgainPlayersSet = new HashSet<ulong>();
 
     private void Awake()
     {
@@ -63,15 +60,12 @@ public class NetworkRaceManager : NetworkBehaviour
         countdownTimer.OnValueChanged += HandleCountdownTimerChanged;
         connectedPlayerCount.OnValueChanged += HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged += HandleReadyPlayerCountChanged;
-        playAgainReadyCount.OnValueChanged += HandlePlayAgainReadyCountChanged;
 
         if (IsServer)
         {
             connectedPlayerCount.Value = NetworkManager.Singleton.ConnectedClientsIds.Count;
             readyPlayerCount.Value = 0;
-            playAgainReadyCount.Value = 0;
             readyPlayersSet.Clear();
-            playAgainPlayersSet.Clear();
         }
 
         SceneManager.sceneLoaded += OnSceneLoaded;
@@ -83,7 +77,6 @@ public class NetworkRaceManager : NetworkBehaviour
         countdownTimer.OnValueChanged -= HandleCountdownTimerChanged;
         connectedPlayerCount.OnValueChanged -= HandleConnectedPlayerCountChanged;
         readyPlayerCount.OnValueChanged -= HandleReadyPlayerCountChanged;
-        playAgainReadyCount.OnValueChanged -= HandlePlayAgainReadyCountChanged;
 
         SceneManager.sceneLoaded -= OnSceneLoaded;
     }
@@ -93,9 +86,7 @@ public class NetworkRaceManager : NetworkBehaviour
         if (IsServer)
         {
             readyPlayersSet.Clear();
-            playAgainPlayersSet.Clear();
             readyPlayerCount.Value = 0;
-            playAgainReadyCount.Value = 0;
             currentRaceState.Value = RaceState.LobbyWaiting;
             winnerClientId.Value = 9999;
         }
@@ -159,11 +150,6 @@ public class NetworkRaceManager : NetworkBehaviour
             return;
         }
 
-        if (FinishLine.LocalPlayerHasWon || (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.hasWonPlayer))
-        {
-            return;
-        }
-
         string currentScene = SceneManager.GetActiveScene().name;
         if (!currentScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
             !currentScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
@@ -202,68 +188,12 @@ public class NetworkRaceManager : NetworkBehaviour
         NotifyMatchEndedRpc(9999);
     }
 
-    private void HandlePlayAgainReadyCountChanged(int previousVal, int newVal)
-    {
-        int total = connectedPlayerCount.Value;
-        OnPlayAgainCountChanged?.Invoke(newVal, total);
-    }
-
     [ClientRpc]
     public void ShowTransitionCoverClientRpc()
     {
         if (SceneTransitionManager.Instance != null)
         {
             SceneTransitionManager.Instance.ShowTransitionCover();
-        }
-    }
-
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    public void RequestPlayAgainServerRpc(ulong clientId)
-    {
-        if (!IsServer) return;
-
-        if (!playAgainPlayersSet.Contains(clientId))
-        {
-            playAgainPlayersSet.Add(clientId);
-            playAgainReadyCount.Value = playAgainPlayersSet.Count;
-            int totalRequired = NetworkManager.Singleton.ConnectedClientsIds.Count;
-
-            if (playAgainPlayersSet.Count >= totalRequired)
-            {
-                playAgainPlayersSet.Clear();
-                playAgainReadyCount.Value = 0;
-
-                ShowTransitionCoverClientRpc();
-                StartCoroutine(DelayedPlayAgainLoadRoutine(0.4f));
-            }
-        }
-    }
-
-    private IEnumerator DelayedPlayAgainLoadRoutine(float delay)
-    {
-        yield return new WaitForSeconds(delay);
-
-        if (LeaderboardManager.Instance != null)
-        {
-            LeaderboardManager.Instance.ResetRun();
-        }
-
-        if (LevelTimer.Instance != null)
-        {
-            LevelTimer.Instance.ResetRunTimer();
-        }
-
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.SceneManager != null && NetworkManager.Singleton.IsListening)
-        {
-            var status = NetworkManager.Singleton.SceneManager.LoadScene("Level 1", LoadSceneMode.Single);
-            if (status != SceneEventProgressStatus.Started)
-            {
-                SceneManager.LoadScene("Level 1");
-            }
-        }
-        else
-        {
-            SceneManager.LoadScene("Level 1");
         }
     }
 

@@ -307,11 +307,11 @@ MonoBehaviour:
   RotationInterpolationType: 0
   ScaleInterpolationType: 0
   PositionLerpSmoothing: 1
-  PositionMaxInterpolationTime: 0.1
+  PositionMaxInterpolationTime: 0.04
   RotationLerpSmoothing: 1
-  RotationMaxInterpolationTime: 0.1
+  RotationMaxInterpolationTime: 0.04
   ScaleLerpSmoothing: 1
-  ScaleMaxInterpolationTime: 0.1
+  ScaleMaxInterpolationTime: 0.04
   AuthorityMode: 1
   TickSyncChildren: 0
   UseUnreliableDeltas: 1
@@ -369,6 +369,8 @@ MonoBehaviour:
   deathPrefabOffset: {x: 0, y: 0, z: 0}
   deathShakeDuration: 0.4
   deathShakeIntensity: 0.2
+  hitStopDuration: 0.05
+  hitStopTimeScale: 0.25
 --- !u!114 &-8733751220468728954
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -433,7 +435,7 @@ MonoBehaviour:
   boundaryDriftCooldown: 0.3
   jumpDuration: 0.75
   jumpCooldown: 0.7
-  carJumpScale: 0.85
+  carJumpScale: 0.9
   shadowPrefab: {fileID: 4031874856162606549, guid: b3256e92454a02a4eb8dc621e6cc69e1, type: 3}
   jumpEffectPrefab: {fileID: 7470715724142129012, guid: b788dfe1df33df0469b9758763b03253, type: 3}
   landingShakeDuration: 0.12
@@ -465,6 +467,44 @@ MonoBehaviour:
       MinSecondsBetweenUpdates: 0
       MaxSecondsBetweenUpdates: 0
     m_InternalValue: 1
+  currentSceneNet:
+    UpdateTraits:
+      MinSecondsBetweenUpdates: 0
+      MaxSecondsBetweenUpdates: 0
+    m_InternalValue:
+      utf8LengthInBytes: 0
+      bytes:
+        offset0000:
+          byte0000: 0
+          byte0001: 0
+          byte0002: 0
+          byte0003: 0
+          byte0004: 0
+          byte0005: 0
+          byte0006: 0
+          byte0007: 0
+          byte0008: 0
+          byte0009: 0
+          byte0010: 0
+          byte0011: 0
+          byte0012: 0
+          byte0013: 0
+          byte0014: 0
+          byte0015: 0
+        byte0016: 0
+        byte0017: 0
+        byte0018: 0
+        byte0019: 0
+        byte0020: 0
+        byte0021: 0
+        byte0022: 0
+        byte0023: 0
+        byte0024: 0
+        byte0025: 0
+        byte0026: 0
+        byte0027: 0
+        byte0028: 0
+        byte0029: 0
 --- !u!82 &6922054621069755212
 AudioSource:
   m_ObjectHideFlags: 0

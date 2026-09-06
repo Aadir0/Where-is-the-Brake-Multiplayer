@@ -2,6 +2,8 @@ using UnityEngine;
 
 public class CameraZoom2D : MonoBehaviour
 {
+    public static CameraZoom2D Instance { get; private set; }
+
     public Transform target;
     public float moveSpeed = 5f;
     public float zoomSpeed = 5f;
@@ -10,6 +12,13 @@ public class CameraZoom2D : MonoBehaviour
     private Camera cam;
     private bool isZooming = false;
 
+    public bool IsZooming => isZooming;
+
+    private void Awake()
+    {
+        Instance = this;
+    }
+
     private void Start()
     {
         cam = GetComponent<Camera>();
@@ -17,6 +26,14 @@ public class CameraZoom2D : MonoBehaviour
         if (cam != null)
         {
             cam.orthographicSize = normalSize;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
         }
     }
 
@@ -31,16 +48,16 @@ public class CameraZoom2D : MonoBehaviour
             transform.position = Vector3.Lerp(transform.position, targetPosition, moveSpeed * Time.deltaTime);
 
             cam.orthographicSize = Mathf.Lerp(cam.orthographicSize, zoomSize, zoomSpeed * Time.deltaTime);
+
+            CameraFollow follow = GetComponent<CameraFollow>();
+            if (follow != null && follow.enableConfiner)
+            {
+                transform.position = follow.ClampPosition(transform.position);
+            }
         }
         else
         {
             cam.orthographicSize = Mathf.Lerp(cam.orthographicSize, normalSize, zoomSpeed * Time.deltaTime);
-        }
-
-        CameraFollow follow = GetComponent<CameraFollow>();
-        if (follow != null && follow.enableConfiner)
-        {
-            transform.position = follow.ClampPosition(transform.position);
         }
     }
 

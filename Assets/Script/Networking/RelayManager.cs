@@ -22,6 +22,13 @@ public class RelayManager : MonoBehaviour
     public bool IsInitialized { get; private set; }
     public bool IsConnecting { get; private set; }
 
+    public static string ParseInputToJoinCode(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return "";
+        // Clean leading/trailing spaces, hyphens, and convert lowercase to uppercase
+        return input.Trim().Replace(" ", "").Replace("-", "").ToUpperInvariant();
+    }
+
     public event Action<string> OnStatusChanged;
     public event Action<string> OnErrorEncountered;
     public event Action OnClientConnectedToHost;
@@ -315,7 +322,7 @@ public class RelayManager : MonoBehaviour
         IsConnecting = true;
         clientConnectionCompleted = false;
 
-        string code = string.IsNullOrWhiteSpace(inputJoinCode) ? "" : inputJoinCode.Trim().ToUpper();
+        string code = ParseInputToJoinCode(inputJoinCode);
         if (string.IsNullOrEmpty(code))
         {
             OnErrorEncountered?.Invoke("Please enter a valid Join Code.");
@@ -479,7 +486,11 @@ public class RelayManager : MonoBehaviour
     {
         transport.UseWebSockets = relayProtocol == "wss";
         transport.MaxSendQueueSize = 1024 * 1024;
+        transport.MaxPacketQueueSize = 256;
+        transport.HeartbeatTimeoutMS = 1000;
+        transport.DisconnectTimeoutMS = 4000;
         transport.MaxConnectAttempts = 10;
+        transport.ConnectTimeoutMS = 2000;
     }
 
     private static string CreateServicesProfileName()

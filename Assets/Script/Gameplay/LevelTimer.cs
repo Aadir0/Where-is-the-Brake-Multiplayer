@@ -14,6 +14,7 @@ public class LevelTimer : NetworkBehaviour
 
     [Header("Run Timer Config")]
     [SerializeField] private float overallRunDurationSeconds = 300f; // 5 minutes total for all levels combined
+    public float OverallRunDurationSeconds => overallRunDurationSeconds;
 
     [Header("UI References (Optional Inspector Assignment)")]
     [SerializeField] private TextMeshProUGUI timerText;
@@ -283,12 +284,6 @@ public class LevelTimer : NetworkBehaviour
             return;
         }
 
-        // Do not trigger TimeOver if this player has won
-        if (FinishLine.LocalPlayerHasWon || (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.hasWonPlayer))
-        {
-            return;
-        }
-
         timerRunning = false;
         offlineIsTimeOver = true;
 
@@ -483,6 +478,21 @@ public class LevelTimer : NetworkBehaviour
         {
             timeOverPanel.SetActive(true);
 
+            // Populate Time Over UI Text Labels
+            TextMeshProUGUI[] tmps = timeOverPanel.GetComponentsInChildren<TextMeshProUGUI>(true);
+            foreach (var t in tmps)
+            {
+                string n = t.gameObject.name.ToLower();
+                if (n.Contains("title") || n.Contains("header") || n.Contains("timeover"))
+                {
+                    t.text = "STAGE TIMED OUT";
+                }
+                else if (n.Contains("prompt") || n.Contains("sub") || n.Contains("hint"))
+                {
+                    t.text = "PRESS [SPACE] / (A) TO RETURN";
+                }
+            }
+
             if (mainMenuButton == null)
             {
                 mainMenuButton = timeOverPanel.GetComponentInChildren<Button>(true);
@@ -492,6 +502,12 @@ public class LevelTimer : NetworkBehaviour
             {
                 mainMenuButton.onClick.RemoveAllListeners();
                 mainMenuButton.onClick.AddListener(OnMainMenuButtonClicked);
+
+                if (UnityEngine.EventSystems.EventSystem.current != null)
+                {
+                    UnityEngine.EventSystems.EventSystem.current.SetSelectedGameObject(mainMenuButton.gameObject);
+                    mainMenuButton.Select();
+                }
             }
         }
     }

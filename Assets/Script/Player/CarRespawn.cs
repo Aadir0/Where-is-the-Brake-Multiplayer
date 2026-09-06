@@ -57,8 +57,7 @@ public class CarRespawn : NetworkBehaviour
         }
     }
 
-    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
-    public void RespawnClientRpc(Vector3 position, Quaternion rotation)
+    public void RespawnCarLocal(Vector3 position, Quaternion rotation)
     {
         if (IsOwner || IsLocalPlayer)
         {
@@ -82,6 +81,29 @@ public class CarRespawn : NetworkBehaviour
         }
 
         NetworkCarController.UpdateAllCarsSceneVisibility();
+    }
+
+    public void RespawnCarLocal()
+    {
+        Vector3 position = hasCheckpoint ? lastCheckpointPosition : transform.position;
+        Quaternion rotation = hasCheckpoint ? lastCheckpointRotation : transform.rotation;
+        RespawnCarLocal(position, rotation);
+    }
+
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void RespawnClientRpc(Vector3 position, Quaternion rotation)
+    {
+        if (IsOwner || IsLocalPlayer)
+        {
+            if (healthComp != null && (healthComp.isDead.Value || healthComp.LocalDeathRequested))
+            {
+                RespawnCarLocal(position, rotation);
+            }
+        }
+        else
+        {
+            RespawnCarLocal(position, rotation);
+        }
     }
 }
 

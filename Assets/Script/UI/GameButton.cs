@@ -313,6 +313,11 @@ public class GameButton : MonoBehaviour
 
     public void RestartLevel()
     {
+        if (CameraFollow.Instance != null)
+        {
+            CameraFollow.Instance.StopShake();
+        }
+
         if (Unity.Netcode.NetworkManager.Singleton != null &&
             Unity.Netcode.NetworkManager.Singleton.IsListening &&
             Unity.Netcode.NetworkManager.Singleton.IsServer &&

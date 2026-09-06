@@ -331,7 +331,7 @@ public class LobbyUI : MonoBehaviour
 
         if (joinCodeInput != null)
         {
-            joinCodeInput.characterLimit = 15;
+            joinCodeInput.characterLimit = 20;
             joinCodeInput.gameObject.SetActive(true);
             joinCodeInput.text = "";
             joinCodeInput.Select();
@@ -357,7 +357,7 @@ public class LobbyUI : MonoBehaviour
         if (leaveRoomButton != null && leaveRoomButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(leaveRoomButton);
         selectedLobbyIndex = 0;
 
-        UpdateStatusText("Enter Room Code (or IP) and click Join Game.");
+        UpdateStatusText("Enter Room Code and click Join.");
     }
 
     public void JoinRoom()
@@ -432,9 +432,10 @@ public class LobbyUI : MonoBehaviour
             return;
         }
 
-        string code = joinCodeInput != null ? joinCodeInput.text : "";
+        string rawInput = joinCodeInput != null ? joinCodeInput.text : "";
+        string code = RelayManager.ParseInputToJoinCode(rawInput);
         SetInteractable(false);
-        UpdateStatusText("Connecting to room...");
+        UpdateStatusText($"Connecting to room {code}...");
 
         // Ensure callbacks are set before attempting connection
         EnsureNetworkCallbacksSubscribed();
@@ -532,7 +533,7 @@ public class LobbyUI : MonoBehaviour
         if (roomCodeText != null)
         {
             roomCodeText.gameObject.SetActive(true);
-            roomCodeText.text = $"ROOM CODE: {roomCode}";
+            roomCodeText.text = $"ROOM CODE: <color=#00FFA3>{roomCode}</color>";
         }
 
         if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);
@@ -561,7 +562,7 @@ public class LobbyUI : MonoBehaviour
         if (leaveRoomButton != null && leaveRoomButton.gameObject.activeInHierarchy) activeLobbyButtons.Add(leaveRoomButton);
         selectedLobbyIndex = 0;
 
-        UpdateStatusText($"Room created! Share Room Code: {roomCode}");
+        UpdateStatusText($"Room created! Share Code: {roomCode}");
     }
 
     private void ShowClientLobbyUI(string roomCode)
@@ -572,7 +573,7 @@ public class LobbyUI : MonoBehaviour
         if (roomCodeText != null)
         {
             roomCodeText.gameObject.SetActive(true);
-            roomCodeText.text = $"CONNECTED ROOM: {roomCode}";
+            roomCodeText.text = $"CONNECTED ROOM: <color=#00FFA3>{roomCode}</color>";
         }
 
         if (joinCodeInput != null) joinCodeInput.gameObject.SetActive(false);

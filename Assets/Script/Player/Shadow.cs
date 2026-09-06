@@ -10,14 +10,21 @@ public class ShadowJump : MonoBehaviour
     [SerializeField] private float sideOffset = 0.2f;
 
     [Header("Smoothness")]
-    [SerializeField] private float positionSmoothness = 7f;
-    [SerializeField] private float rotationSmoothness = 5f;
+    [SerializeField] private float positionSmoothness = 16f;
+    [SerializeField] private float rotationSmoothness = 14f;
 
     [Header("Rotation")]
     [Range(0f, 1f)]
     [SerializeField] private float rotationAmount = 0.92f;
 
+    [Header("Shadow Color")]
+    [SerializeField] private Color groundShadowColor = new Color(0f, 0f, 0f, 0.6f);
+
     private Transform target;
+    private SpriteRenderer targetSpriteRenderer;
+    private SpriteRenderer shadowRenderer;
+    private Sprite defaultShadowSprite;
+    private Material defaultMaterial;
     private Vector3 initialScale;
     private bool active;
     private float disableTime;
@@ -25,6 +32,12 @@ public class ShadowJump : MonoBehaviour
     private void Awake()
     {
         initialScale = transform.localScale;
+        shadowRenderer = GetComponent<SpriteRenderer>();
+        if (shadowRenderer != null)
+        {
+            defaultShadowSprite = shadowRenderer.sprite;
+            defaultMaterial = shadowRenderer.sharedMaterial;
+        }
 
         gameObject.SetActive(false);
     }
@@ -34,25 +47,44 @@ public class ShadowJump : MonoBehaviour
         float duration)
     {
         target = targetTransform;
+        FetchTargetSpriteRenderer();
+
+        if (shadowRenderer == null) shadowRenderer = GetComponent<SpriteRenderer>();
+        if (shadowRenderer != null)
+        {
+            if (defaultShadowSprite == null) defaultShadowSprite = shadowRenderer.sprite;
+            if (defaultMaterial == null) defaultMaterial = shadowRenderer.sharedMaterial;
+            shadowRenderer.material = defaultMaterial;
+            shadowRenderer.color = groundShadowColor;
+            shadowRenderer.flipY = false;
+        }
 
         active = true;
+        disableTime = Time.time + duration;
 
-        disableTime =
-            Time.time + duration;
+        transform.localScale = initialScale * shadowScale;
 
-        transform.localScale =
-            initialScale;
+        // Calculate and snap to initial position and rotation
+        Vector2 forward = target.right;
+        Vector2 side = target.up;
+        Vector2 shadowDirection = (-forward + side * sideOffset).normalized;
+        Vector2 desiredPosition = (Vector2)target.position + shadowDirection * shadowDistance;
 
-        transform.localScale =
-            initialScale * shadowScale;
+        float desiredAngle = target.eulerAngles.z * rotationAmount;
+        transform.position = desiredPosition;
+        transform.rotation = Quaternion.Euler(0f, 0f, desiredAngle);
 
-        transform.position =
-            target.position;
-
-        transform.rotation =
-            target.rotation;
+        UpdateVisuals();
 
         gameObject.SetActive(true);
+    }
+
+    private void FetchTargetSpriteRenderer()
+    {
+        if (target == null) return;
+        targetSpriteRenderer = target.GetComponent<SpriteRenderer>();
+        if (targetSpriteRenderer == null) targetSpriteRenderer = target.GetComponentInChildren<SpriteRenderer>();
+        if (targetSpriteRenderer == null) targetSpriteRenderer = target.GetComponentInParent<SpriteRenderer>();
     }
 
     private void LateUpdate()
@@ -76,64 +108,62 @@ public class ShadowJump : MonoBehaviour
             return;
         }
 
-        Vector2 forward =
-            target.right;
+        Vector2 forward = target.right;
+        Vector2 side = target.up;
 
-        Vector2 side =
-            target.up;
+        Vector2 shadowDirection = (-forward + side * sideOffset).normalized;
+        Vector2 desiredPosition = (Vector2)target.position + shadowDirection * shadowDistance;
 
-        Vector2 shadowDirection =
-            (-forward + side * sideOffset).normalized;
+        UpdateVisuals();
 
-        Vector2 desiredPosition =
-            (Vector2)target.position +
-            shadowDirection * shadowDistance;
+        float positionLerp = 1f - Mathf.Exp(-positionSmoothness * Time.deltaTime);
+        transform.position = Vector3.Lerp(transform.position, desiredPosition, positionLerp);
 
-        float positionLerp =
-            1f - Mathf.Exp(
-                -positionSmoothness *
-                Time.deltaTime
-            );
+        float desiredAngle = target.eulerAngles.z * rotationAmount;
+        float rotationLerp = 1f - Mathf.Exp(-rotationSmoothness * Time.deltaTime);
+        float currentAngle = Mathf.LerpAngle(transform.eulerAngles.z, desiredAngle, rotationLerp);
 
-        transform.position =
-            Vector3.Lerp(
-                transform.position,
-                desiredPosition,
-                positionLerp
-            );
-
-        float desiredAngle =
-            target.eulerAngles.z *
-            rotationAmount;
-
-        float rotationLerp =
-            1f - Mathf.Exp(
-                -rotationSmoothness *
-                Time.deltaTime
-            );
-
-        float currentAngle =
-            Mathf.LerpAngle(
-                transform.eulerAngles.z,
-                desiredAngle,
-                rotationLerp
-            );
-
-        transform.rotation =
-            Quaternion.Euler(
-                0f,
-                0f,
-                currentAngle
-            );
+        transform.rotation = Quaternion.Euler(0f, 0f, currentAngle);
     }
 
-    private void DisableShadow()
+    private void UpdateVisuals()
+    {
+        if (targetSpriteRenderer == null || targetSpriteRenderer.sprite == null)
+        {
+            FetchTargetSpriteRenderer();
+        }
+
+        if (shadowRenderer != null)
+        {
+            Sprite activeCarSprite = (targetSpriteRenderer != null && targetSpriteRenderer.sprite != null)
+                ? targetSpriteRenderer.sprite
+                : defaultShadowSprite;
+
+            if (defaultMaterial != null)
+            {
+                shadowRenderer.material = defaultMaterial;
+            }
+            shadowRenderer.sprite = activeCarSprite != null ? activeCarSprite : defaultShadowSprite;
+            shadowRenderer.color = groundShadowColor;
+            shadowRenderer.flipY = false;
+            if (targetSpriteRenderer != null) shadowRenderer.flipX = targetSpriteRenderer.flipX;
+        }
+    }
+
+    public void DisableShadow()
     {
         active = false;
-
         target = null;
-        transform.localScale =
-            initialScale;
+        targetSpriteRenderer = null;
+        transform.localScale = initialScale;
+
+        if (shadowRenderer != null)
+        {
+            if (defaultMaterial != null) shadowRenderer.material = defaultMaterial;
+            if (defaultShadowSprite != null) shadowRenderer.sprite = defaultShadowSprite;
+            shadowRenderer.color = groundShadowColor;
+            shadowRenderer.flipY = false;
+        }
 
         gameObject.SetActive(false);
     }
