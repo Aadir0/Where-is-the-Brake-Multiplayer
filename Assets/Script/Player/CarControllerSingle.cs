@@ -94,8 +94,10 @@ public class CarControllerSingle : MonoBehaviour
     private Vector2 lastRearRightPosition;
 
     [Header("Death")]
-    [SerializeField] private float deathSequenceDelay = 0.6f;
+    [SerializeField] private float deathSequenceDelay = 0.0f;
     [SerializeField] private GameObject smokeEffect;
+    [SerializeField] private GameObject holeDeathEffect;
+    [SerializeField] private GameObject trapDeathEffect;
     [SerializeField] private GameObject GameoverMenu;
     [SerializeField] private CameraZoom2D cameraZoom;
 
@@ -423,9 +425,45 @@ public class CarControllerSingle : MonoBehaviour
 
     private void OnTriggerEnter2D(Collider2D other)
     {
-        if ((other.CompareTag("Trap") || other.CompareTag("Hole")) && !isDead)
+        if (isDead) return;
+
+        // Check for Trap: tag on self, parent, root, or name
+        bool isTrap = other.CompareTag("Trap");
+        if (!isTrap && other.transform.parent != null) isTrap = other.transform.parent.CompareTag("Trap");
+        if (!isTrap && other.transform.root != null) isTrap = other.transform.root.CompareTag("Trap");
+        if (!isTrap)
         {
-            StartCoroutine(Die());
+            string n = other.name.ToLower();
+            isTrap = n.Contains("trap") || n.Contains("saw") || n.Contains("spike");
+        }
+        if (!isTrap)
+        {
+            string layerName = LayerMask.LayerToName(other.gameObject.layer);
+            isTrap = !string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Check for Hole: tag on self, parent, root, or name
+        bool isHole = other.CompareTag("Hole");
+        if (!isHole && other.transform.parent != null) isHole = other.transform.parent.CompareTag("Hole");
+        if (!isHole && other.transform.root != null) isHole = other.transform.root.CompareTag("Hole");
+        if (!isHole)
+        {
+            string n = other.name.ToLower();
+            isHole = n.Contains("hole") || n.Contains("water") || n.Contains("lava") || n.Contains("pit");
+        }
+        if (!isHole)
+        {
+            string layerName = LayerMask.LayerToName(other.gameObject.layer);
+            isHole = !string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (isTrap || isHole)
+        {
+            Debug.Log($"[CarControllerSingle] DEATH TRIGGER: obj='{other.gameObject.name}', " +
+                      $"tag='{other.gameObject.tag}', " +
+                      $"layer='{LayerMask.LayerToName(other.gameObject.layer)}', " +
+                      $"isTrap={isTrap}, isHole={isHole} => Using {(isTrap ? "TRAP" : "HOLE")} death effect");
+            StartCoroutine(Die(isTrap));
         }
     }
 
@@ -681,7 +719,7 @@ public class CarControllerSingle : MonoBehaviour
         }
     }
 
-    private IEnumerator Die()
+    private IEnumerator Die(bool isTrap = false)
     {
         isDead = true;
 
@@ -697,9 +735,24 @@ public class CarControllerSingle : MonoBehaviour
             cameraZoom.StartZoom(transform);
         }
 
-        if (smokeEffect != null)
+        GameObject effectToSpawn = isTrap
+            ? (trapDeathEffect != null ? trapDeathEffect : Resources.Load<GameObject>("ExplosionEffect") ?? Resources.Load<GameObject>("DeathEffect") ?? smokeEffect)
+            : (holeDeathEffect != null ? holeDeathEffect : Resources.Load<GameObject>("SplashEffect") ?? smokeEffect);
+
+        Debug.Log($"[CarControllerSingle] Die: isTrap={isTrap}, " +
+                  $"trapDeathEffect={(trapDeathEffect != null ? trapDeathEffect.name : "NULL")}, " +
+                  $"holeDeathEffect={(holeDeathEffect != null ? holeDeathEffect.name : "NULL")}, " +
+                  $"selectedEffect={(effectToSpawn != null ? effectToSpawn.name : "NULL")}");
+
+        if (effectToSpawn != null)
         {
-            Instantiate(smokeEffect, transform.position, Quaternion.identity);
+            GameObject fx = Instantiate(effectToSpawn, transform.position, Quaternion.identity);
+            StartCoroutine(AutoCleanEffectRoutine(fx));
+        }
+        else if (smokeEffect != null)
+        {
+            GameObject fx = Instantiate(smokeEffect, transform.position, Quaternion.identity);
+            StartCoroutine(AutoCleanEffectRoutine(fx));
         }
 
         if (DeathMarkerManager.Instance != null)
@@ -707,13 +760,54 @@ public class CarControllerSingle : MonoBehaviour
             DeathMarkerManager.Instance.SpawnDeathMarker(transform.position);
         }
 
-        yield return new WaitForSeconds(deathSequenceDelay);
-
         if (GameoverMenu != null)
         {
             GameoverMenu.SetActive(true);
         }
 
+        if (deathSequenceDelay > 0f)
+        {
+            yield return new WaitForSeconds(deathSequenceDelay);
+        }
+        else
+        {
+            yield return null;
+        }
+
         Destroy(gameObject);
+    }
+
+    private IEnumerator AutoCleanEffectRoutine(GameObject effectObj, float maxTimeout = 2.5f)
+    {
+        if (effectObj == null) yield break;
+
+        Animator anim = effectObj.GetComponent<Animator>() ?? effectObj.GetComponentInChildren<Animator>();
+        ParticleSystem ps = effectObj.GetComponent<ParticleSystem>() ?? effectObj.GetComponentInChildren<ParticleSystem>();
+
+        float timer = 0f;
+        bool animStarted = false;
+
+        while (effectObj != null && timer < maxTimeout)
+        {
+            timer += Time.deltaTime;
+
+            if (anim != null && anim.isActiveAndEnabled)
+            {
+                AnimatorStateInfo info = anim.GetCurrentAnimatorStateInfo(0);
+                if (info.normalizedTime > 0.05f) animStarted = true;
+                if (animStarted && info.normalizedTime >= 1.0f) break;
+            }
+            else if (ps != null)
+            {
+                if (!ps.IsAlive(true) && timer > 0.1f) break;
+            }
+
+            yield return null;
+        }
+
+        if (effectObj != null)
+        {
+            Destroy(effectObj);
+        }
     }
 }

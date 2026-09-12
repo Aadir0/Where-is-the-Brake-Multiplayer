@@ -70,7 +70,7 @@ public class ShadowJump : MonoBehaviour
         Vector2 shadowDirection = (-forward + side * sideOffset).normalized;
         Vector2 desiredPosition = (Vector2)target.position + shadowDirection * shadowDistance;
 
-        float desiredAngle = target.eulerAngles.z * rotationAmount;
+        float desiredAngle = target.eulerAngles.z;
         transform.position = desiredPosition;
         transform.rotation = Quaternion.Euler(0f, 0f, desiredAngle);
 
@@ -119,7 +119,7 @@ public class ShadowJump : MonoBehaviour
         float positionLerp = 1f - Mathf.Exp(-positionSmoothness * Time.deltaTime);
         transform.position = Vector3.Lerp(transform.position, desiredPosition, positionLerp);
 
-        float desiredAngle = target.eulerAngles.z * rotationAmount;
+        float desiredAngle = target.eulerAngles.z;
         float rotationLerp = 1f - Mathf.Exp(-rotationSmoothness * Time.deltaTime);
         float currentAngle = Mathf.LerpAngle(transform.eulerAngles.z, desiredAngle, rotationLerp);
 

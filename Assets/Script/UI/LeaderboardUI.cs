@@ -391,18 +391,18 @@ public class LeaderboardUI : MonoBehaviour
 
         if (titleText != null)
         {
-            titleText.text = "<b><color=#00FFA3>───</color> <color=#FFFFFF>FINAL RESULTS & LEADERBOARD</color> <color=#00FFA3>───</color></b>";
+            titleText.text = "<b><color=#00FFA3>PERFORMANCE</color> <color=#FFFFFF>SUMMARY</color></b>";
         }
 
         if (currentGradeText != null)
         {
             string gradeColor = grade switch
             {
-                "S" => "#FFD700", // Radiant Gold
-                "A" => "#00FFA3", // Neon Mint
-                "B" => "#00D2FF", // Electric Cyan
-                "C" => "#FF9900", // Vivid Orange
-                _   => "#FF4D6D"  // Crimson Red
+                "S" => "#FFD700",
+                "A" => "#00FFA3",
+                "B" => "#00D2FF",
+                "C" => "#FF9900",
+                _   => "#FF4D6D"
             };
 
             string gradeComment = grade switch
@@ -414,17 +414,17 @@ public class LeaderboardUI : MonoBehaviour
                 _   => "NEEDS PRACTICE"
             };
 
-            currentGradeText.text = $"<size=65%><color=#A0B2C6>OVERALL PERFORMANCE</color></size>\n<size=155%><b><color={gradeColor}>RANK {grade}</color></b></size>\n<size=55%><color=#8892B0>— {gradeComment} —</color></size>";
+            currentGradeText.text = $"<size=65%><color=#8E9BAE>OVERALL RATING</color></size>\n<size=180%><b><color={gradeColor}>RANK {grade}</color></b></size>\n<size=60%><color=#6B7C93>{gradeComment}</color></size>";
         }
 
         if (currentSummaryText != null)
         {
-            currentSummaryText.text = $"<color=#00FFA3>TOTAL TIME:</color> <b><color=#FFFFFF>{formattedTotalTime}</color></b>     <color=#445566>│</color>     <color=#FF6B6B>TOTAL DEATHS:</color> <b><color=#FFFFFF>{totalDeaths}</color></b>";
+            currentSummaryText.text = $"<color=#8E9BAE>TOTAL TIME</color>  <b><color=#FFFFFF>{formattedTotalTime}</color></b>      <color=#415064>|</color>      <color=#8E9BAE>TOTAL DEATHS</color>  <b><color=#FFFFFF>{totalDeaths}</color></b>";
         }
 
         if (levelBreakdownText != null)
         {
-            string breakdown = "<b><color=#00FFA3>┌─── STAGE BREAKDOWN ───┐</color></b>\n\n";
+            string breakdown = "<b><color=#8E9BAE>STAGE BREAKDOWN</color></b>\n\n";
             var stats = LeaderboardManager.Instance.LevelStats;
             if (stats != null && stats.Count > 0)
             {
@@ -438,22 +438,21 @@ public class LeaderboardUI : MonoBehaviour
                         : "<color=#00FFA3>CLEARED</color>";
 
                     string displayName = !string.IsNullOrEmpty(st.levelName) ? st.levelName.ToUpper() : $"LEVEL {i + 1}";
-                    string deathStr = st.deaths == 0 ? "<color=#00FFA3>0 DEATHS</color>" : $"<color=#FF6B6B>{st.deaths} DEATHS</color>";
+                    string deathStr = st.deaths == 0 ? "<color=#00FFA3>0</color>" : $"<color=#FF6B6B>{st.deaths}</color>";
 
-                    breakdown += $"<b><color=#FFFFFF>{displayName,-8}</color></b>   <color=#DDEEFA>{tStr}</color>   {deathStr,10}   [{statusTag}]\n";
+                    breakdown += $"<b><color=#FFFFFF>{displayName,-9}</color></b>  <color=#CBD5E1>{tStr}</color>   <color=#8E9BAE>DEATHS:</color> {deathStr,-4}  [{statusTag}]\n";
                 }
             }
             else
             {
-                breakdown += "<color=#888888>No stage records available.</color>\n";
+                breakdown += "<color=#6B7C93>No stage records available.</color>\n";
             }
-            breakdown += "\n<b><color=#00FFA3>└────────────────────────┘</color></b>";
             levelBreakdownText.text = breakdown;
         }
 
         if (topScoresText != null)
         {
-            string topText = "<b><color=#FFD700>┌─── BEST RUNS ───┐</color></b>\n\n";
+            string topText = "<b><color=#8E9BAE>TOP RECORDS</color></b>\n\n";
             List<LeaderboardEntry> entries = LeaderboardManager.Instance.GetTopEntries();
             if (entries != null && entries.Count > 0)
             {
@@ -466,12 +465,10 @@ public class LeaderboardUI : MonoBehaviour
 
                     string medal = i switch
                     {
-                        0 => "<color=#FFD700><b>1ST</b></color>",
-                        1 => "<color=#E0E0E0><b>2ND</b></color>",
-                        2 => "<color=#CD7F32><b>3RD</b></color>",
-                        3 => "<color=#7EC8E3><b>4TH</b></color>",
-                        4 => "<color=#A0B2C6><b>5TH</b></color>",
-                        _ => $"<b>{(i + 1)}TH</b>"
+                        0 => "<color=#FFD700>1ST</color>",
+                        1 => "<color=#E2E8F0>2ND</color>",
+                        2 => "<color=#CD7F32>3RD</color>",
+                        _ => $"<color=#8E9BAE>{(i + 1)}TH</color>"
                     };
 
                     string gradeColor = entry.grade switch
@@ -485,14 +482,13 @@ public class LeaderboardUI : MonoBehaviour
 
                     string deathsColor = entry.totalDeaths == 0 ? "#00FFA3" : "#FF6B6B";
 
-                    topText += $"{medal}  <color={gradeColor}>[{entry.grade}]</color>  <b><color=#FFFFFF>{eTimeStr}</color></b>  •  <color={deathsColor}>{entry.totalDeaths} DEATHS</color>\n";
+                    topText += $"{medal}  <color={gradeColor}>[{entry.grade}]</color>  <b><color=#FFFFFF>{eTimeStr}</color></b>   <color=#8E9BAE>DEATHS:</color> <color={deathsColor}>{entry.totalDeaths}</color>\n";
                 }
             }
             else
             {
-                topText += "<color=#888888>No best runs recorded yet.</color>\n";
+                topText += "<color=#6B7C93>No records registered.</color>\n";
             }
-            topText += "\n<b><color=#FFD700>└───────────────────┘</color></b>";
             topScoresText.text = topText;
         }
     }

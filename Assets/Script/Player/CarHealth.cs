@@ -18,6 +18,8 @@ public class CarHealth : NetworkBehaviour
 
     [Header("Death Effects")]
     [SerializeField] private GameObject smokeEffect;
+    [SerializeField] private GameObject holeDeathEffect;
+    [SerializeField] private GameObject trapDeathEffect;
     [SerializeField] private float smokeEffectLifetime = 3.5f;
     [SerializeField] private AudioClip deathSound;
     [SerializeField] private Vector3 deathPrefabOffset = Vector3.zero;
@@ -196,11 +198,9 @@ public class CarHealth : NetworkBehaviour
         }
     }
 
-    private bool IsHoleOrTrapObject(GameObject obj)
+    public bool IsTrapObject(GameObject obj)
     {
         if (obj == null) return false;
-
-        // Check self, parent, root, and attached rigidbody
         GameObject[] candidates = new GameObject[]
         {
             obj,
@@ -212,28 +212,41 @@ public class CarHealth : NetworkBehaviour
         foreach (GameObject candidate in candidates)
         {
             if (candidate == null) continue;
-
-            // 1. Tag Check
-            if (candidate.CompareTag("Hole") || candidate.CompareTag("Trap")) return true;
-
-            // 2. Physics Layer Check
+            if (candidate.CompareTag("Trap")) return true;
             string layerName = LayerMask.LayerToName(candidate.layer);
-            if (!string.IsNullOrEmpty(layerName) &&
-                (string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase)))
-            {
-                return true;
-            }
-
-            // 3. Name Fallback Check
-            string candidateName = candidate.name.ToLower();
-            if (candidateName.Contains("hole") || candidateName.Contains("trap"))
-            {
-                return true;
-            }
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase)) return true;
+            string n = candidate.name.ToLower();
+            if (n.Contains("trap") || n.Contains("saw") || n.Contains("spike")) return true;
         }
-
         return false;
+    }
+
+    public bool IsHoleObject(GameObject obj)
+    {
+        if (obj == null) return false;
+        GameObject[] candidates = new GameObject[]
+        {
+            obj,
+            obj.transform.parent != null ? obj.transform.parent.gameObject : null,
+            obj.transform.root != null ? obj.transform.root.gameObject : null,
+            obj.GetComponent<Rigidbody2D>() != null ? obj.GetComponent<Rigidbody2D>().gameObject : null
+        };
+
+        foreach (GameObject candidate in candidates)
+        {
+            if (candidate == null) continue;
+            if (candidate.CompareTag("Hole")) return true;
+            string layerName = LayerMask.LayerToName(candidate.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase)) return true;
+            string n = candidate.name.ToLower();
+            if (n.Contains("hole") || n.Contains("water") || n.Contains("lava") || n.Contains("pit")) return true;
+        }
+        return false;
+    }
+
+    private bool IsHoleOrTrapObject(GameObject obj)
+    {
+        return IsTrapObject(obj) || IsHoleObject(obj);
     }
 
     private void OnTriggerEnter2D(Collider2D other)
@@ -295,8 +308,54 @@ public class CarHealth : NetworkBehaviour
         if (jumpExpired)
         {
             localDeathRequested = true;
+
+            // Determine if this is a Trap collision by checking the collider's own tag first,
+            // then walk up the hierarchy. This is the most reliable approach.
+            bool isTrap = false;
+            if (other != null)
+            {
+                // Direct tag check on the collider's GameObject (most reliable)
+                if (other.gameObject.CompareTag("Trap"))
+                {
+                    isTrap = true;
+                }
+                // Check parent
+                else if (other.transform.parent != null && other.transform.parent.gameObject.CompareTag("Trap"))
+                {
+                    isTrap = true;
+                }
+                // Check root
+                else if (other.transform.root != null && other.transform.root.gameObject.CompareTag("Trap"))
+                {
+                    isTrap = true;
+                }
+                // Fallback: name-based check
+                else
+                {
+                    string objName = other.gameObject.name.ToLower();
+                    if (objName.Contains("trap") || objName.Contains("saw") || objName.Contains("spike"))
+                    {
+                        isTrap = true;
+                    }
+                }
+                // Fallback: layer-based check
+                if (!isTrap)
+                {
+                    string layerName = LayerMask.LayerToName(other.gameObject.layer);
+                    if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase))
+                    {
+                        isTrap = true;
+                    }
+                }
+            }
+
+            Debug.Log($"[CarHealth] DEATH CONTACT: obj='{(other != null ? other.gameObject.name : "null")}', " +
+                      $"tag='{(other != null ? other.gameObject.tag : "null")}', " +
+                      $"layer='{(other != null ? LayerMask.LayerToName(other.gameObject.layer) : "null")}', " +
+                      $"isTrap={isTrap} => Using {(isTrap ? "TRAP" : "HOLE")} death effect");
+
             RequestTakeDamageRpc(maxHealth);
-            PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+            PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name, isTrap);
             ApplyLocalDeathResponse(); // client-side prediction: stop, hide & show UI NOW; do not wait for isDead to round-trip
         }
     }
@@ -391,9 +450,24 @@ public class CarHealth : NetworkBehaviour
             {
                 isOverlappingHole = true;
                 localDeathRequested = true;
-                Debug.Log($"[CarHealth DANGER] Hole Layer detected after jump expired! Executing Death Sequence (IsOwner: {IsOwner})");
+                bool isTrap = false;
+                if (carCollider != null)
+                {
+                    List<Collider2D> colHits = new List<Collider2D>();
+                    ContactFilter2D f = new ContactFilter2D { useTriggers = true, useLayerMask = false };
+                    int c = carCollider.Overlap(f, colHits);
+                    for (int i = 0; i < c; i++)
+                    {
+                        if (colHits[i] != null && IsTrapObject(colHits[i].gameObject))
+                        {
+                            isTrap = true;
+                            break;
+                        }
+                    }
+                }
+                Debug.Log($"[CarHealth DANGER] Hole/Trap detected after jump expired! isTrap={isTrap}, Executing Death Sequence (IsOwner: {IsOwner})");
                 RequestTakeDamageRpc(maxHealth);
-                PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
+                PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name, isTrap);
                 ApplyLocalDeathResponse(); // client-side prediction: stop, hide & show UI NOW; do not wait for isDead to round-trip
             }
         }
@@ -425,7 +499,7 @@ public class CarHealth : NetworkBehaviour
     }
 
     [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
-    public void PlayDeathEffectsRpc(Vector3 deathPosition, Unity.Collections.FixedString32Bytes deathSceneName)
+    public void PlayDeathEffectsRpc(Vector3 deathPosition, Unity.Collections.FixedString32Bytes deathSceneName, bool isTrap = false)
     {
         string localScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
         if (!string.Equals(deathSceneName.ToString(), localScene, StringComparison.OrdinalIgnoreCase))
@@ -441,10 +515,24 @@ public class CarHealth : NetworkBehaviour
 
         Vector3 finalSpawnPosition = deathPosition + deathPrefabOffset;
 
-        if (smokeEffect != null)
+        GameObject effectPrefab = isTrap
+            ? (trapDeathEffect != null ? trapDeathEffect : Resources.Load<GameObject>("ExplosionEffect") ?? Resources.Load<GameObject>("DeathEffect") ?? smokeEffect)
+            : (holeDeathEffect != null ? holeDeathEffect : Resources.Load<GameObject>("SplashEffect") ?? smokeEffect);
+
+        Debug.Log($"[CarHealth] PlayDeathEffectsRpc: isTrap={isTrap}, " +
+                  $"trapDeathEffect={(trapDeathEffect != null ? trapDeathEffect.name : "NULL")}, " +
+                  $"holeDeathEffect={(holeDeathEffect != null ? holeDeathEffect.name : "NULL")}, " +
+                  $"selectedEffect={(effectPrefab != null ? effectPrefab.name : "NULL")}");
+
+        if (effectPrefab != null)
+        {
+            GameObject fxObj = Instantiate(effectPrefab, finalSpawnPosition, Quaternion.identity);
+            StartCoroutine(AutoCleanEffectRoutine(fxObj));
+        }
+        else if (smokeEffect != null)
         {
             GameObject smokeObj = Instantiate(smokeEffect, finalSpawnPosition, Quaternion.identity);
-            Destroy(smokeObj, smokeEffectLifetime);
+            StartCoroutine(AutoCleanEffectRoutine(smokeObj));
         }
 
         if (deathSound != null)
@@ -456,6 +544,40 @@ public class CarHealth : NetworkBehaviour
         if (DeathMarkerManager.Instance != null)
         {
             DeathMarkerManager.Instance.SpawnDeathMarker(finalSpawnPosition, OwnerClientId);
+        }
+    }
+
+    private IEnumerator AutoCleanEffectRoutine(GameObject effectObj, float maxTimeout = 2.5f)
+    {
+        if (effectObj == null) yield break;
+
+        Animator anim = effectObj.GetComponent<Animator>() ?? effectObj.GetComponentInChildren<Animator>();
+        ParticleSystem ps = effectObj.GetComponent<ParticleSystem>() ?? effectObj.GetComponentInChildren<ParticleSystem>();
+
+        float timer = 0f;
+        bool animStarted = false;
+
+        while (effectObj != null && timer < maxTimeout)
+        {
+            timer += Time.deltaTime;
+
+            if (anim != null && anim.isActiveAndEnabled)
+            {
+                AnimatorStateInfo info = anim.GetCurrentAnimatorStateInfo(0);
+                if (info.normalizedTime > 0.05f) animStarted = true;
+                if (animStarted && info.normalizedTime >= 1.0f) break;
+            }
+            else if (ps != null)
+            {
+                if (!ps.IsAlive(true) && timer > 0.1f) break;
+            }
+
+            yield return null;
+        }
+
+        if (effectObj != null)
+        {
+            Destroy(effectObj);
         }
     }
 
@@ -590,16 +712,37 @@ public class CarHealth : NetworkBehaviour
         }
     }
 
+    private GameObject cachedDeadPanel;
+
     private GameObject GetDeadPanelInScene()
     {
-        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        if (cachedDeadPanel != null && cachedDeadPanel.scene.isLoaded)
         {
-            if (go.CompareTag("Dead") && go.scene.isLoaded)
+            return cachedDeadPanel;
+        }
+
+        GameObject tagged = GameObject.FindGameObjectWithTag("Dead");
+        if (tagged != null)
+        {
+            cachedDeadPanel = tagged;
+            return cachedDeadPanel;
+        }
+
+        Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var canvas in canvases)
+        {
+            foreach (Transform child in canvas.transform)
             {
-                return go;
+                string n = child.name.ToLower();
+                if (child.CompareTag("Dead") || n.Contains("dead") || n.Contains("gameover") || n.Contains("death"))
+                {
+                    cachedDeadPanel = child.gameObject;
+                    return cachedDeadPanel;
+                }
             }
         }
-        return GameObject.FindGameObjectWithTag("Dead");
+
+        return null;
     }
 
     private void ShowDeadUI()
@@ -641,53 +784,22 @@ public class CarHealth : NetworkBehaviour
                 }
             }
 
+            isRestartInteractable = true;
+
             Button btn = deadPanel.GetComponentInChildren<Button>(true);
-            if (enableRestartCoroutine != null) StopCoroutine(enableRestartCoroutine);
-            enableRestartCoroutine = StartCoroutine(EnableRestartButtonAfterAnimationRoutine(deadPanel, btn));
-        }
-    }
-
-    private IEnumerator EnableRestartButtonAfterAnimationRoutine(GameObject deadPanel, Button btn)
-    {
-        isRestartInteractable = false;
-        if (btn != null)
-        {
-            btn.interactable = false;
-        }
-
-        Animator anim = deadPanel.GetComponent<Animator>();
-        if (anim == null) anim = deadPanel.GetComponentInChildren<Animator>();
-
-        if (anim != null)
-        {
-            yield return null; // Allow animator state initialization
-            AnimatorStateInfo stateInfo = anim.GetCurrentAnimatorStateInfo(0);
-            float animLength = stateInfo.length > 0f ? stateInfo.length : 0.5f;
-
-            // Wait for GameOver UI animation to finish before enabling restart button
-            yield return new WaitForSecondsRealtime(animLength);
-        }
-        else
-        {
-            yield return new WaitForSecondsRealtime(0.35f);
-        }
-
-        isRestartInteractable = true;
-
-        if (btn != null)
-        {
-            btn.interactable = true;
-            btn.onClick.RemoveAllListeners();
-            btn.onClick.AddListener(OnRestartButtonClicked);
-
-            if (EventSystem.current != null)
+            if (btn != null)
             {
-                EventSystem.current.SetSelectedGameObject(btn.gameObject);
-                btn.Select();
+                btn.interactable = true;
+                btn.onClick.RemoveAllListeners();
+                btn.onClick.AddListener(OnRestartButtonClicked);
+
+                if (EventSystem.current != null)
+                {
+                    EventSystem.current.SetSelectedGameObject(btn.gameObject);
+                    btn.Select();
+                }
             }
         }
-
-        enableRestartCoroutine = null;
     }
 
     private void HideDeadUI()

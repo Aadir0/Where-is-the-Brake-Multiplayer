@@ -364,6 +364,8 @@ MonoBehaviour:
       MaxSecondsBetweenUpdates: 0
     m_InternalValue: 0
   smokeEffect: {fileID: 2875046477161170494, guid: e49431c251da5194faf8a6244b7e65a1, type: 3}
+  holeDeathEffect: {fileID: 8176816636447303550, guid: e27611a7b9a973df78053d350c3e3f0a, type: 3}
+  trapDeathEffect: {fileID: 8968692254074731167, guid: 207d76734e52bd0c0862196821926ea8, type: 3}
   smokeEffectLifetime: 3.5
   deathSound: {fileID: 8300000, guid: 5f35f2bf003aa2848ada7186bc55879a, type: 3}
   deathPrefabOffset: {x: 0, y: 0, z: 0}

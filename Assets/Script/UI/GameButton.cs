@@ -214,6 +214,18 @@ public class GameButton : MonoBehaviour
 
         if (submitPressed)
         {
+            if (isWinningCanvas)
+            {
+                // On winning canvas, pressing submit directly proceeds to next level
+                if (FinishLine.Instance != null)
+                {
+                    FinishLine.Instance.LoadNextLevelLocal();
+                    return;
+                }
+                LoadNextScene();
+                return;
+            }
+
             Button currentBtn = (selectedIndex == 0) ? restartButton : mainMenuButton;
             if (currentBtn != null && currentBtn.IsActive() && currentBtn.IsInteractable())
             {
@@ -224,19 +236,14 @@ public class GameButton : MonoBehaviour
 
     private void HandleWinningContinueInput()
     {
-        // In 2-player multiplayer, do not allow manual skipping to next level.
-        // Level transitions must only be triggered when both players finish or finish timer expires.
-        bool isMultiplayer = Unity.Netcode.NetworkManager.Singleton != null &&
-                             Unity.Netcode.NetworkManager.Singleton.IsListening &&
-                             Unity.Netcode.NetworkManager.Singleton.ConnectedClientsIds.Count > 1;
-
-        if (isMultiplayer)
+        if (!IsContinuePressed())
         {
             return;
         }
 
-        if (!IsContinuePressed())
+        if (FinishLine.Instance != null)
         {
+            FinishLine.Instance.LoadNextLevelLocal();
             return;
         }
 

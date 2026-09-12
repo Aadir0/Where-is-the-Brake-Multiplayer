@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 [System.Serializable]
 public class LevelStatEntry
@@ -199,7 +200,26 @@ public class LeaderboardManager : MonoBehaviour
 
     public void EnsureAllLevelsRecorded()
     {
-        string[] expectedLevels = { "Level 1", "Level 2", "Level 3", "Level 4" };
+        List<string> expectedLevels = new List<string>();
+        int count = SceneManager.sceneCountInBuildSettings;
+        for (int i = 0; i < count; i++)
+        {
+            string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
+            string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
+            if (!string.IsNullOrEmpty(sceneName) &&
+                !sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase) &&
+                !sceneName.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
+                !expectedLevels.Contains(sceneName))
+            {
+                expectedLevels.Add(sceneName);
+            }
+        }
+
+        if (expectedLevels.Count == 0)
+        {
+            expectedLevels.AddRange(new[] { "Level 1", "Level 2", "Level 3", "Level 4" });
+        }
+
         foreach (string lvl in expectedLevels)
         {
             bool exists = false;

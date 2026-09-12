@@ -11,9 +11,9 @@ public class CameraFollow : MonoBehaviour
     public Vector3 offset = new Vector3(0f, 0f, -10f);
 
     [Header("Follow Settings")]
-    public float smoothSpeed = 10f;
-    public float lookaheadFactor = 0.25f;
-    public float lookaheadDamping = 5f;
+    public float smoothTime = 0.12f;
+    public float lookaheadFactor = 0.2f;
+    public float lookaheadDamping = 4.0f;
     public bool lookAtTarget = false;
 
     [Header("Camera Confiner Bounds")]
@@ -36,12 +36,14 @@ public class CameraFollow : MonoBehaviour
     private float shakeTimer = 0f;
     private float currentShakeIntensity = 0f;
     private Vector2 currentLookahead = Vector2.zero;
+    private Vector3 currentVelocity = Vector3.zero;
 
     public void SetTarget(Transform newTarget)
     {
         target = newTarget;
         targetRb = target != null ? target.GetComponent<Rigidbody2D>() : null;
         currentLookahead = Vector2.zero;
+        currentVelocity = Vector3.zero;
         StopShake();
         if (target != null)
         {
@@ -70,6 +72,7 @@ public class CameraFollow : MonoBehaviour
     private void OnSceneLoaded(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
     {
         StopShake();
+        currentVelocity = Vector3.zero;
 
         if (scene.name.Equals("Ending", StringComparison.OrdinalIgnoreCase) || scene.name.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
         {
@@ -95,6 +98,7 @@ public class CameraFollow : MonoBehaviour
     private void Start()
     {
         StopShake();
+        currentVelocity = Vector3.zero;
         if (cam == null) cam = GetComponent<Camera>();
         FindTargetByTag();
         FindConfinerInScene();
@@ -186,9 +190,16 @@ public class CameraFollow : MonoBehaviour
             }
         }
 
-        // Singleplayer only fallback (never lock onto other players in multiplayer)
+        // Singleplayer only fallback
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening)
         {
+            CarControllerSingle single = UnityEngine.Object.FindFirstObjectByType<CarControllerSingle>();
+            if (single != null)
+            {
+                SetTarget(single.transform);
+                return;
+            }
+
             if (cars.Length > 0 && target == null)
             {
                 SetTarget(cars[0].transform);
@@ -204,6 +215,7 @@ public class CameraFollow : MonoBehaviour
     {
         if (CameraZoom2D.Instance != null && CameraZoom2D.Instance.IsZooming)
         {
+            currentVelocity = Vector3.zero;
             return;
         }
 
@@ -232,7 +244,7 @@ public class CameraFollow : MonoBehaviour
 
         Vector3 desiredPosition = target.position + offset;
 
-        // Velocity lookahead for smooth dynamic camera anticipation
+        // Smooth velocity lookahead for dynamic anticipation
         if (targetRb != null && lookaheadFactor > 0f)
         {
             Vector2 targetLookahead = targetRb.linearVelocity * lookaheadFactor;
@@ -246,9 +258,8 @@ public class CameraFollow : MonoBehaviour
         desiredPosition.x += currentLookahead.x;
         desiredPosition.y += currentLookahead.y;
 
-        // Framerate-independent exponential smoothing
-        float blendFactor = 1f - Mathf.Exp(-smoothSpeed * Time.deltaTime);
-        Vector3 smoothedPosition = Vector3.Lerp(transform.position, desiredPosition, blendFactor);
+        // SmoothDamp for buttery camera movement without micro-jitter
+        Vector3 smoothedPosition = Vector3.SmoothDamp(transform.position, desiredPosition, ref currentVelocity, smoothTime);
 
         if (enableConfiner)
         {
@@ -277,7 +288,10 @@ public class CameraFollow : MonoBehaviour
 
         if (cam == null) cam = GetComponent<Camera>();
 
-        FindConfinerInScene();
+        if (confinerCollider == null)
+        {
+            FindConfinerInScene();
+        }
 
         float halfHeight = 0f;
         float halfWidth = 0f;

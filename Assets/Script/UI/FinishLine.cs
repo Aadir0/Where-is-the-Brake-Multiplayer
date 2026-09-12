@@ -42,6 +42,7 @@ public class FinishLine : MonoBehaviour
     private void Awake()
     {
         Instance = this;
+        CacheUIReferences();
     }
 
     private void Start()
@@ -51,23 +52,89 @@ public class FinishLine : MonoBehaviour
         LocalPlayerHasWon = false;
         isTransitioningNext = false;
 
-        GameObject winUI = GetWinPanelInScene();
-        if (winUI != null) winUI.SetActive(false);
-        if (winPanel != null) winPanel.SetActive(false);
+        CacheUIReferences();
 
-        GameObject tilUI = GetTimeIsLessPanelInScene();
-        if (tilUI != null) tilUI.SetActive(false);
+        if (winPanel != null) winPanel.SetActive(false);
         if (timeIsLessPanel != null) timeIsLessPanel.SetActive(false);
+    }
+
+    private void CacheUIReferences()
+    {
+        if (winPanel == null || !winPanel.scene.isLoaded)
+        {
+            GameObject tagged = GameObject.FindGameObjectWithTag("Winning");
+            if (tagged != null && tagged != gameObject && tagged.GetComponentInParent<Canvas>() != null)
+            {
+                winPanel = tagged;
+            }
+            else
+            {
+                Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                foreach (var canvas in canvases)
+                {
+                    foreach (Transform child in canvas.transform)
+                    {
+                        string n = child.name.ToLower();
+                        if (child.CompareTag("Winning") || n.Contains("win") || n.Contains("victory"))
+                        {
+                            winPanel = child.gameObject;
+                            break;
+                        }
+                    }
+                    if (winPanel != null) break;
+                }
+            }
+        }
+
+        if (timeIsLessPanel == null || !timeIsLessPanel.scene.isLoaded)
+        {
+            GameObject tagged = GameObject.FindGameObjectWithTag("TimeIsLess");
+            if (tagged != null && tagged != gameObject && tagged.GetComponentInParent<Canvas>() != null)
+            {
+                timeIsLessPanel = tagged;
+            }
+            else
+            {
+                Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                foreach (var canvas in canvases)
+                {
+                    foreach (Transform child in canvas.transform)
+                    {
+                        string n = child.name.ToLower();
+                        if (child.CompareTag("TimeIsLess") || n.Contains("timeisless"))
+                        {
+                            timeIsLessPanel = child.gameObject;
+                            break;
+                        }
+                    }
+                    if (timeIsLessPanel != null) break;
+                }
+            }
+        }
     }
 
     private void OnEnable()
     {
-        resetAction.Enable();
+        try
+        {
+            if (resetAction != null && !resetAction.enabled)
+            {
+                resetAction.Enable();
+            }
+        }
+        catch { }
     }
 
     private void OnDisable()
     {
-        resetAction.Disable();
+        try
+        {
+            if (resetAction != null && resetAction.enabled)
+            {
+                resetAction.Disable();
+            }
+        }
+        catch { }
 
         if (!hasWon && LeaderboardManager.Instance != null)
         {
@@ -103,11 +170,37 @@ public class FinishLine : MonoBehaviour
         {
             AnimateWinStatsUI();
 
-            Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+            bool proceedPressed = false;
 
-            bool proceedPressed = (Keyboard.current != null && (Keyboard.current.rKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.spaceKey.wasPressedThisFrame)) ||
-                                 (gamepad != null && gamepad.buttonSouth.wasPressedThisFrame) ||
-                                 resetAction.WasPressedThisFrame();
+            // 1. Keyboard (Space, R, Enter) - keep only Space and R as valid keys
+            if (Keyboard.current != null)
+            {
+                if (Keyboard.current.spaceKey.wasPressedThisFrame ||
+                    Keyboard.current.rKey.wasPressedThisFrame)
+                {
+                    proceedPressed = true;
+                }
+            }
+
+            // 2. Gamepad (buttonSouth only)
+            Gamepad gamepad = Gamepad.current ?? (Gamepad.all.Count > 0 ? Gamepad.all[0] : null);
+            if (!proceedPressed && gamepad != null)
+            {
+                if (gamepad.buttonSouth.wasPressedThisFrame)
+                {
+                    proceedPressed = true;
+                }
+            }
+
+            // 3. Input Action (if configured)
+            if (!proceedPressed && resetAction != null)
+            {
+                try
+                {
+                    if (resetAction.WasPressedThisFrame()) proceedPressed = true;
+                }
+                catch { }
+            }
 
             if (proceedPressed)
             {
@@ -123,8 +216,9 @@ public class FinishLine : MonoBehaviour
         float pulseOffset = Mathf.Sin(Time.unscaledTime * statsPulseSpeed) * statsPulseAmount;
         float wobbleZ = Mathf.Sin(Time.unscaledTime * statsWobbleSpeed) * statsWobbleAngle;
 
-        foreach (Transform t in statsAnimTransforms)
+        for (int i = 0; i < statsAnimTransforms.Count; i++)
         {
+            Transform t = statsAnimTransforms[i];
             if (t == null || !t.gameObject.activeInHierarchy) continue;
 
             Vector3 baseScale = statsInitialScales.ContainsKey(t) ? statsInitialScales[t] : Vector3.one;
@@ -139,9 +233,10 @@ public class FinishLine : MonoBehaviour
     {
         NetworkObject netObj = col.GetComponentInParent<NetworkObject>();
         NetworkCarController carCtrl = col.GetComponentInParent<NetworkCarController>();
+        CarControllerSingle singleCtrl = col.GetComponentInParent<CarControllerSingle>();
         CarHealth healthComp = col.GetComponentInParent<CarHealth>();
 
-        if (col.CompareTag("Player") || (col.transform.root != null && col.transform.root.CompareTag("Player")) || carCtrl != null)
+        if (col.CompareTag("Player") || (col.transform.root != null && col.transform.root.CompareTag("Player")) || carCtrl != null || singleCtrl != null)
         {
             bool isLocalCar = (netObj != null && netObj.IsOwner) || (netObj == null);
             if (!isLocalCar) return;
@@ -158,9 +253,14 @@ public class FinishLine : MonoBehaviour
                 }
             }
 
+            if (singleCtrl != null)
+            {
+                singleCtrl.SetCarWon();
+            }
+
             int deaths = healthComp != null ? healthComp.deathCount.Value : (CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0);
             float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetCurrentLevelElapsedTime() : 0f;
-            Transform playerT = carCtrl != null ? carCtrl.transform : (netObj != null ? netObj.transform : col.transform.root);
+            Transform playerT = carCtrl != null ? carCtrl.transform : (singleCtrl != null ? singleCtrl.transform : (netObj != null ? netObj.transform : col.transform.root));
 
             if (!hasWon)
             {
@@ -190,60 +290,24 @@ public class FinishLine : MonoBehaviour
 
     public GameObject GetWinPanelInScene()
     {
-        if (winPanel != null && winPanel.scene.isLoaded && winPanel.GetComponentInParent<Canvas>() != null && winPanel != gameObject)
+        if (winPanel != null && winPanel.scene.isLoaded)
         {
             return winPanel;
         }
 
-        winPanel = null;
-
-        // Search ONLY for UI GameObjects that belong to a Canvas and have a CanvasRenderer
-        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
-        {
-            if (go.scene.isLoaded && go != gameObject && go.GetComponentInParent<Canvas>() != null && go.GetComponent<Collider2D>() == null)
-            {
-                string n = go.name.ToLower();
-                if (go.CompareTag("Winning") || n.Equals("winningscene") || n.Equals("winpanel") || n.Contains("winning") || n.Equals("winui"))
-                {
-                    winPanel = go;
-                    return go;
-                }
-            }
-        }
-
-        GameObject tagged = GameObject.FindGameObjectWithTag("Winning");
-        if (tagged != null && tagged != gameObject && tagged.GetComponentInParent<Canvas>() != null)
-        {
-            winPanel = tagged;
-            return tagged;
-        }
-
-        return null;
+        CacheUIReferences();
+        return winPanel;
     }
 
     public GameObject GetTimeIsLessPanelInScene()
     {
-        if (timeIsLessPanel != null && timeIsLessPanel.scene.isLoaded && timeIsLessPanel.GetComponentInParent<Canvas>() != null && timeIsLessPanel != gameObject)
+        if (timeIsLessPanel != null && timeIsLessPanel.scene.isLoaded)
         {
             return timeIsLessPanel;
         }
 
-        timeIsLessPanel = null;
-
-        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
-        {
-            if (go.scene.isLoaded && go != gameObject && go.GetComponentInParent<Canvas>() != null && go.GetComponent<Collider2D>() == null)
-            {
-                string n = go.name.ToLower();
-                if (go.CompareTag("TimeIsLess") || n.Equals("timeislesspanel") || n.Contains("timeisless"))
-                {
-                    timeIsLessPanel = go;
-                    return go;
-                }
-            }
-        }
-
-        return null;
+        CacheUIReferences();
+        return timeIsLessPanel;
     }
 
     public static void PlayWinParticlesGlobal(Vector3 position)
@@ -314,14 +378,57 @@ public class FinishLine : MonoBehaviour
         if (winUI != null)
         {
             winUI.SetActive(true);
-            PopulateWinStatsUI(winUI, elapsedTimeSeconds, deaths);
-            UpdateReadyPromptText("PRESS [SPACE] / [R] / (A) FOR NEXT LEVEL!");
 
-            Button nextBtn = winUI.GetComponentInChildren<Button>(true);
-            if (nextBtn != null)
+            // Instant zero-delay visual display
+            CanvasGroup cg = winUI.GetComponent<CanvasGroup>() ?? winUI.GetComponentInChildren<CanvasGroup>(true);
+            if (cg != null)
             {
-                nextBtn.onClick.RemoveAllListeners();
-                nextBtn.onClick.AddListener(LoadNextLevelLocal);
+                cg.alpha = 1f;
+                cg.interactable = true;
+                cg.blocksRaycasts = true;
+            }
+
+            // Immediately snap any sliding background rects to on-screen center
+            RectTransform[] rects = winUI.GetComponentsInChildren<RectTransform>(true);
+            foreach (var r in rects)
+            {
+                if (r != null && r.name.ToLower().Contains("background"))
+                {
+                    Vector2 pos = r.anchoredPosition;
+                    pos.x = 0f;
+                    r.anchoredPosition = pos;
+                }
+            }
+
+            Animator anim = winUI.GetComponent<Animator>() ?? winUI.GetComponentInChildren<Animator>(true);
+            if (anim != null)
+            {
+                anim.enabled = false; // Disable animator to prevent 0.5s slide lag
+            }
+
+            PopulateWinStatsUI(winUI, elapsedTimeSeconds, deaths);
+            UpdateReadyPromptText("PRESS [SPACE] / [R] / (A) / CLICK FOR NEXT LEVEL!");
+
+            Button[] buttons = winUI.GetComponentsInChildren<Button>(true);
+            foreach (var nextBtn in buttons)
+            {
+                if (nextBtn != null)
+                {
+                    nextBtn.onClick.RemoveListener(LoadNextLevelLocal);
+                    nextBtn.onClick.AddListener(LoadNextLevelLocal);
+                }
+            }
+
+            // Also attach a click listener to winUI itself so clicking anywhere on the screen triggers next level
+            Button panelBtn = winUI.GetComponent<Button>();
+            if (panelBtn == null)
+            {
+                panelBtn = winUI.AddComponent<Button>();
+            }
+            if (panelBtn != null)
+            {
+                panelBtn.onClick.RemoveListener(LoadNextLevelLocal);
+                panelBtn.onClick.AddListener(LoadNextLevelLocal);
             }
         }
 
@@ -453,22 +560,53 @@ public class FinishLine : MonoBehaviour
     {
         if (isTransitioningNext) return;
         isTransitioningNext = true;
-        StopAllCoroutines();
+
+        Time.timeScale = 1.0f;
 
         string currentScene = SceneManager.GetActiveScene().name;
         string nextScene = GetNextSceneName(currentScene);
 
-        // If reaching Ending in multiplayer, notify other clients
-        if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
+        Debug.Log($"[FinishLine] Proceeding to next level: from '{currentScene}' to '{nextScene}'");
+
+        StartCoroutine(TransitionWatchdogRoutine(nextScene));
+
+        // If in multiplayer, coordinate level transition via server
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
-            ulong localId = (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening) ? NetworkManager.Singleton.LocalClientId : 0;
-            if (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
             {
-                NetworkCarController.LocalPlayerInstance.NotifyMatchEndedRpc(localId);
+                ulong localId = NetworkManager.Singleton.LocalClientId;
+                if (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.IsSpawned)
+                {
+                    NetworkCarController.LocalPlayerInstance.NotifyMatchEndedRpc(localId);
+                }
+                if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned)
+                {
+                    NetworkRaceManager.Instance.NotifyMatchEndedRpc(localId);
+                }
             }
-            if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+
+            if (NetworkManager.Singleton.IsServer)
             {
-                NetworkRaceManager.Instance.NotifyMatchEndedRpc(localId);
+                if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned)
+                {
+                    NetworkRaceManager.Instance.LoadNextLevelServer();
+                    return;
+                }
+
+                if (NetworkManager.Singleton.SceneManager != null)
+                {
+                    var status = NetworkManager.Singleton.SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
+                    if (status == SceneEventProgressStatus.Started) return;
+                }
+            }
+            else
+            {
+                if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned)
+                {
+                    NetworkRaceManager.Instance.RequestLoadNextLevelServerRpc();
+                    return;
+                }
             }
         }
 
@@ -482,19 +620,22 @@ public class FinishLine : MonoBehaviour
         }
     }
 
-    private string GetNextSceneName(string currentSceneName)
+    private IEnumerator TransitionWatchdogRoutine(string targetScene)
     {
-        if (currentSceneName.Equals("Level 1", StringComparison.OrdinalIgnoreCase)) return "Level 2";
-        if (currentSceneName.Equals("Level 2", StringComparison.OrdinalIgnoreCase)) return "Level 3";
-        if (currentSceneName.Equals("Level 3", StringComparison.OrdinalIgnoreCase)) return "Level 4";
-        if (currentSceneName.Equals("Level 4", StringComparison.OrdinalIgnoreCase)) return "Ending";
-
-        int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
-        if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
+        yield return new WaitForSecondsRealtime(1.2f);
+        if (SceneManager.GetActiveScene().name.Equals(targetScene, StringComparison.OrdinalIgnoreCase))
         {
-            string scenePath = SceneUtility.GetScenePathByBuildIndex(nextSceneIndex);
-            return System.IO.Path.GetFileNameWithoutExtension(scenePath);
+            yield break;
         }
-        return "Ending";
+
+        // If still on the same scene after timeout, force load directly
+        Debug.LogWarning($"[FinishLine] Transition watchdog triggered for '{targetScene}' -- forcing direct load.");
+        isTransitioningNext = false;
+        SceneManager.LoadScene(targetScene);
+    }
+
+    public string GetNextSceneName(string currentSceneName)
+    {
+        return NetworkRaceManager.GetNextSceneName(currentSceneName);
     }
 }

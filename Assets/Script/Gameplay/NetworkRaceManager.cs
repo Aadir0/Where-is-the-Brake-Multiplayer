@@ -197,6 +197,15 @@ public class NetworkRaceManager : NetworkBehaviour
         }
     }
 
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void RequestLoadNextLevelServerRpc()
+    {
+        if (IsServer)
+        {
+            LoadNextLevelServer();
+        }
+    }
+
     public void LoadNextLevelServer()
     {
         if (!IsServer) return;
@@ -220,19 +229,39 @@ public class NetworkRaceManager : NetworkBehaviour
         }
     }
 
-    private string GetNextSceneName(string currentSceneName)
+    public static string GetNextSceneName(string currentSceneName)
     {
-        if (currentSceneName.Equals("Level 1", StringComparison.OrdinalIgnoreCase)) return "Level 2";
-        if (currentSceneName.Equals("Level 2", StringComparison.OrdinalIgnoreCase)) return "Level 3";
-        if (currentSceneName.Equals("Level 3", StringComparison.OrdinalIgnoreCase)) return "Level 4";
-        if (currentSceneName.Equals("Level 4", StringComparison.OrdinalIgnoreCase)) return "Ending";
+        if (string.IsNullOrEmpty(currentSceneName)) return "Level 2";
 
-        int nextSceneIndex = SceneManager.GetActiveScene().buildIndex + 1;
-        if (nextSceneIndex < SceneManager.sceneCountInBuildSettings)
+        if (currentSceneName.StartsWith("Level", StringComparison.OrdinalIgnoreCase))
         {
-            string scenePath = SceneUtility.GetScenePathByBuildIndex(nextSceneIndex);
-            return System.IO.Path.GetFileNameWithoutExtension(scenePath);
+            string numberPart = currentSceneName.Substring(5).Trim();
+            if (int.TryParse(numberPart, out int currentLevelNum))
+            {
+                int nextLevelNum = currentLevelNum + 1;
+                if (nextLevelNum <= 5)
+                {
+                    return "Level " + nextLevelNum;
+                }
+                return "Ending";
+            }
         }
+
+        // Dynamic next scene lookup that skips disabled scenes (e.g., Level 4)
+        int currentIndex = SceneManager.GetActiveScene().buildIndex;
+        for (int i = currentIndex + 1; i < SceneManager.sceneCountInBuildSettings; i++)
+        {
+            string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
+            string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
+            // Skip known disabled scenes or ones you want to ignore
+            if (sceneName.Equals("Level 4", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.IsNullOrEmpty(sceneName) && !sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+            {
+                return sceneName;
+            }
+        }
+        // Fallback when no further enabled scenes
+        return "Ending";
         return "Ending";
     }
 }

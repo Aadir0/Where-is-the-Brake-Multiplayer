@@ -768,11 +768,16 @@ public class NetworkCarController : NetworkBehaviour
         if (IsOwner || IsLocalPlayer) return true;
 
         string localScene = SceneManager.GetActiveScene().name;
-        string carScene = currentSceneNet.Value.ToString();
-
-        if (string.IsNullOrEmpty(carScene))
+        if (localScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase) ||
+            localScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
         {
             return false;
+        }
+
+        string carScene = currentSceneNet.Value.ToString();
+        if (string.IsNullOrEmpty(carScene))
+        {
+            return true;
         }
 
         return string.Equals(carScene, localScene, StringComparison.OrdinalIgnoreCase);

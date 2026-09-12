@@ -68,25 +68,34 @@ public class SceneTransitionManager : MonoBehaviour
         circleTransitionPanel = null;
         circleTransform = null;
 
-        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        GameObject tagged = GameObject.FindGameObjectWithTag("Transition");
+        if (tagged != null && tagged != gameObject && !tagged.transform.IsChildOf(transform))
         {
-            if (go == gameObject) continue; // Never target the manager script's own GameObject
-            if (go.transform.IsChildOf(transform)) continue;
-
-            if (go.scene.isLoaded &&
-                (go.CompareTag("Transition") ||
-                 string.Equals(go.name, "CircleTransition", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(go.name, "TransitionPanel", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(go.name, "Circle", StringComparison.OrdinalIgnoreCase)))
+            RectTransform rect = tagged.GetComponent<RectTransform>() ?? tagged.GetComponentInChildren<RectTransform>(true);
+            if (rect != null)
             {
-                RectTransform rect = go.GetComponent<RectTransform>();
-                if (rect == null) rect = go.GetComponentInChildren<RectTransform>(true);
+                circleTransitionPanel = tagged;
+                circleTransform = rect;
+                return;
+            }
+        }
 
-                if (rect != null)
+        Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var canvas in canvases)
+        {
+            foreach (Transform child in canvas.transform)
+            {
+                if (child.gameObject == gameObject || child.IsChildOf(transform)) continue;
+                string n = child.name.ToLower();
+                if (child.CompareTag("Transition") || n.Contains("circletransition") || n.Contains("transitionpanel") || n.Equals("circle"))
                 {
-                    circleTransitionPanel = go;
-                    circleTransform = rect;
-                    break;
+                    RectTransform rect = child.GetComponent<RectTransform>() ?? child.GetComponentInChildren<RectTransform>(true);
+                    if (rect != null)
+                    {
+                        circleTransitionPanel = child.gameObject;
+                        circleTransform = rect;
+                        return;
+                    }
                 }
             }
         }
