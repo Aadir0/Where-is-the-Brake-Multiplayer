@@ -239,7 +239,7 @@ public class NetworkRaceManager : NetworkBehaviour
             if (int.TryParse(numberPart, out int currentLevelNum))
             {
                 int nextLevelNum = currentLevelNum + 1;
-                if (nextLevelNum <= 5)
+                if (nextLevelNum <= 6)
                 {
                     return "Level " + nextLevelNum;
                 }
@@ -247,21 +247,18 @@ public class NetworkRaceManager : NetworkBehaviour
             }
         }
 
-        // Dynamic next scene lookup that skips disabled scenes (e.g., Level 4)
+        // Dynamic next scene lookup over enabled build scenes.
         int currentIndex = SceneManager.GetActiveScene().buildIndex;
         for (int i = currentIndex + 1; i < SceneManager.sceneCountInBuildSettings; i++)
         {
             string scenePath = SceneUtility.GetScenePathByBuildIndex(i);
             string sceneName = System.IO.Path.GetFileNameWithoutExtension(scenePath);
-            // Skip known disabled scenes or ones you want to ignore
-            if (sceneName.Equals("Level 4", StringComparison.OrdinalIgnoreCase)) continue;
             if (!string.IsNullOrEmpty(sceneName) && !sceneName.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
             {
                 return sceneName;
             }
         }
         // Fallback when no further enabled scenes
-        return "Ending";
         return "Ending";
     }
 }

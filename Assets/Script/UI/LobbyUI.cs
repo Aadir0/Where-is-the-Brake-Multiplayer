@@ -65,11 +65,33 @@ public class LobbyUI : MonoBehaviour
 
         if (joinCodeInput != null)
         {
-            joinCodeInput.characterLimit = 15;
+            joinCodeInput.characterLimit = 20;
             joinCodeInput.characterValidation = TMP_InputField.CharacterValidation.None;
+            joinCodeInput.onValueChanged.RemoveListener(ForceJoinCodeUppercase);
+            joinCodeInput.onValueChanged.AddListener(ForceJoinCodeUppercase);
         }
 
         CacheOriginalScales();
+    }
+
+    // Lets players type the room code in lowercase; it is visually converted to
+    // uppercase as they type. RelayManager.ParseInputToJoinCode also normalizes
+    // on submit, so this is purely visual feedback (caret position preserved).
+    private bool isForcingJoinCodeUppercase;
+    private void ForceJoinCodeUppercase(string value)
+    {
+        if (isForcingJoinCodeUppercase || joinCodeInput == null || string.IsNullOrEmpty(value)) return;
+
+        string upper = value.ToUpperInvariant();
+        if (value == upper) return;
+
+        isForcingJoinCodeUppercase = true;
+        int caret = joinCodeInput.caretPosition;
+        int anchor = joinCodeInput.selectionAnchorPosition;
+        joinCodeInput.text = upper;
+        joinCodeInput.caretPosition = Mathf.Clamp(caret, 0, upper.Length);
+        joinCodeInput.selectionAnchorPosition = Mathf.Clamp(anchor, 0, upper.Length);
+        isForcingJoinCodeUppercase = false;
     }
 
     private void CacheOriginalScales()
@@ -332,6 +354,8 @@ public class LobbyUI : MonoBehaviour
         if (joinCodeInput != null)
         {
             joinCodeInput.characterLimit = 20;
+            joinCodeInput.onValueChanged.RemoveListener(ForceJoinCodeUppercase);
+            joinCodeInput.onValueChanged.AddListener(ForceJoinCodeUppercase);
             joinCodeInput.gameObject.SetActive(true);
             joinCodeInput.text = "";
             joinCodeInput.Select();
@@ -434,6 +458,11 @@ public class LobbyUI : MonoBehaviour
 
         string rawInput = joinCodeInput != null ? joinCodeInput.text : "";
         string code = RelayManager.ParseInputToJoinCode(rawInput);
+        if (string.IsNullOrEmpty(code))
+        {
+            UpdateStatusText("Please enter a valid Room Code.");
+            return;
+        }
         SetInteractable(false);
         UpdateStatusText($"Connecting to room {code}...");
 

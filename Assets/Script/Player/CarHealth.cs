@@ -58,7 +58,13 @@ public class CarHealth : NetworkBehaviour
     private void Awake()
     {
         DontDestroyOnLoad(gameObject);
-        LocalPlayerHealth = this;
+        // Same guard as NetworkCarController: do not let a remote opponent's
+        // car steal the LocalPlayerHealth slot during Awake. The owner claims
+        // it in OnNetworkSpawn.
+        if (LocalPlayerHealth == null)
+        {
+            LocalPlayerHealth = this;
+        }
         rb = GetComponent<Rigidbody2D>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         carCollider = GetComponent<Collider2D>();

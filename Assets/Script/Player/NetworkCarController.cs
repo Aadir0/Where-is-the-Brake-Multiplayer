@@ -161,7 +161,15 @@ public class NetworkCarController : NetworkBehaviour
     private void Awake()
     {
         DontDestroyOnLoad(gameObject);
-        LocalPlayerInstance = this;
+        // Only claim the local-player slot if it is still empty. Every spawned
+        // car (including the remote opponent's ghost on this peer) runs Awake,
+        // so unconditional assignment let the opponent steal LocalPlayerInstance
+        // and the camera could latch onto the wrong car. Ownership is resolved
+        // properly in OnNetworkSpawn.
+        if (LocalPlayerInstance == null)
+        {
+            LocalPlayerInstance = this;
+        }
         rb = GetComponent<Rigidbody2D>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         boxCollider = GetComponent<CapsuleCollider2D>();
@@ -325,6 +333,10 @@ public class NetworkCarController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         DontDestroyOnLoad(gameObject);
+        if (IsOwner || IsLocalPlayer)
+        {
+            LocalPlayerInstance = this;
+        }
         canJump = false;
         isJumping = false;
         jumpStartTime = -100f;

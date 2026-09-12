@@ -13,7 +13,7 @@ using UnityEngine;
 public class RelayManager : MonoBehaviour
 {
     [SerializeField] private float clientConnectionTimeout = 60f;
-    private const string relayProtocol = "udp";
+    private const string relayProtocol = "dtls"; // dtls = encrypted UDP, recommended for Unity Relay
     private const int clientConnectionBufferTimeoutSeconds = 30;
 
     public static RelayManager Instance { get; private set; }
@@ -118,7 +118,11 @@ public class RelayManager : MonoBehaviour
         string msg = string.IsNullOrEmpty(reason) ? "Disconnected from host." : $"Connection failed: {reason}";
         IsConnecting = false;
         clientConnectionCompleted = false;
-        waitConnectionCoroutine = null;
+        if (waitConnectionCoroutine != null)
+        {
+            StopCoroutine(waitConnectionCoroutine);
+            waitConnectionCoroutine = null;
+        }
         OnClientDisconnectedFromHost?.Invoke(msg);
     }
 
@@ -181,8 +185,26 @@ public class RelayManager : MonoBehaviour
             const string missingManagerMsg = "Connection aborted because NetworkManager is no longer available.";
             Debug.LogWarning($"[RelayManager] {missingManagerMsg}");
             OnErrorEncountered?.Invoke(missingManagerMsg);
+            IsConnecting = false;
+            waitConnectionCoroutine = null;
         }
-        // No timeout error is reported here.
+        else
+        {
+            // Timed out waiting for the handshake: the join code may be wrong/expired,
+            // the host may have left, or the route may be blocked. Tear down the
+            // half-open client so the player is not stuck on "Still connecting..."
+            // forever, and report the failure so the lobby UI re-enables Join.
+            const string timeoutMsg = "Could not connect to host (connection timed out). Check the Room Code and try again.";
+            Debug.LogWarning($"[RelayManager] {timeoutMsg}");
+            if (NetworkManager.Singleton.IsListening || NetworkManager.Singleton.ShutdownInProgress)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+            IsConnecting = false;
+            clientConnectionCompleted = false;
+            waitConnectionCoroutine = null;
+            OnErrorEncountered?.Invoke(timeoutMsg);
+        }
 
     }
 
@@ -363,12 +385,17 @@ public class RelayManager : MonoBehaviour
             OnStatusChanged?.Invoke($"Joining Relay Session with Code {code}...");
             Debug.Log($"[RelayManager] Requesting JoinAllocation for code: {code}");
             JoinAllocation joinAllocation = await RelayService.Instance.JoinAllocationAsync(code);
+            Debug.Log($"[RelayManager] JoinAllocation received. AllocationId: {joinAllocation.AllocationId}, " +
+                      $"Region: {joinAllocation.Region}, " +
+                      $"ServerEndpoints count: {joinAllocation.ServerEndpoints?.Count ?? 0}");
 
             // Determine protocol string based on setting (default udp)
             string proto = string.IsNullOrWhiteSpace(relayProtocol) ? "udp" : relayProtocol.Trim().ToLowerInvariant();
             Debug.Log($"[RelayManager] Configuring Client with Relay protocol '{proto}'");
 
             RelayServerData relayServerData = AllocationUtils.ToRelayServerData(joinAllocation, proto);
+            Debug.Log($"[RelayManager] RelayServerData: Host={relayServerData.Endpoint}, " +
+                      $"IsSecure={relayServerData.IsSecure}");
             ConfigureTransportForRelay(transport);
             transport.SetRelayServerData(relayServerData);
             ConfigureNetworkForRelay(transport);
@@ -486,11 +513,11 @@ public class RelayManager : MonoBehaviour
     {
         transport.UseWebSockets = relayProtocol == "wss";
         transport.MaxSendQueueSize = 1024 * 1024;
-        transport.MaxPacketQueueSize = 256;
-        transport.HeartbeatTimeoutMS = 1000;
-        transport.DisconnectTimeoutMS = 4000;
-        transport.MaxConnectAttempts = 10;
-        transport.ConnectTimeoutMS = 2000;
+        transport.MaxPacketQueueSize = 512;
+        transport.HeartbeatTimeoutMS = 5000;      // 5s — Relay adds latency, 1s was too aggressive
+        transport.DisconnectTimeoutMS = 30000;     // 30s — allow time for Relay route recovery
+        transport.MaxConnectAttempts = 15;          // More retry attempts through Relay
+        transport.ConnectTimeoutMS = 5000;          // 5s per attempt — Relay handshake needs time
     }
 
     private static string CreateServicesProfileName()

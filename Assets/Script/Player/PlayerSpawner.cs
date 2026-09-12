@@ -127,7 +127,8 @@ public class PlayerSpawner : MonoBehaviour
         string activeScene = SceneManager.GetActiveScene().name;
         if (IsGameplayScene(activeScene))
         {
-            SpawnOrRepositionPlayerForClient(clientId, (int)clientId);
+            int playerIndex = GetClientIndex(clientId);
+            SpawnOrRepositionPlayerForClient(clientId, playerIndex);
         }
 
         NotifyPlayerCountToAllClients();
@@ -218,6 +219,26 @@ public class PlayerSpawner : MonoBehaviour
     private void CacheSceneSpawnPoints()
     {
         cachedSpawnPoints = UnityEngine.Object.FindObjectsByType<SpawnPoint>(FindObjectsSortMode.None);
+        // Sort by name so host and client deterministically get SpawnPoint_1 /
+        // SpawnPoint_2 in the same order on every peer (FindObjectsByType order
+        // is undefined, which previously swapped player spawns at random).
+        if (cachedSpawnPoints != null && cachedSpawnPoints.Length > 1)
+        {
+            Array.Sort(cachedSpawnPoints, (a, b) => string.Compare(a.gameObject.name, b.gameObject.name, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private int GetClientIndex(ulong clientId)
+    {
+        if (NetworkManager.Singleton == null || NetworkManager.Singleton.ConnectedClientsIds == null) return 0;
+        for (int i = 0; i < NetworkManager.Singleton.ConnectedClientsIds.Count; i++)
+        {
+            if (NetworkManager.Singleton.ConnectedClientsIds[i] == clientId)
+            {
+                return i;
+            }
+        }
+        return 0;
     }
 
     private GameObject SelectCarPrefabForClient(ulong clientId, int playerIndex)
