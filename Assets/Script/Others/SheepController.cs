@@ -1,5 +1,7 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Tilemaps;
 
 [RequireComponent(typeof(Rigidbody2D))]
 [RequireComponent(typeof(Collider2D))]
@@ -28,6 +30,12 @@ public class SheepController : MonoBehaviour
     [SerializeField] private float maxEatDuration = 6.0f;
     [Range(0f, 1f)]
     [SerializeField] private float eatProbability = 0.45f;
+
+    [Header("Rotation & Facing")]
+    [SerializeField] private bool rotateInMovementDirection = true;
+    [SerializeField] private float turnSpeed = 720.0f;
+    [SerializeField] private bool baseFacingLeft = true;
+    [SerializeField] private float rotationOffsetAngle = 0.0f;
 
     [Header("Knockback & Recovery")]
     [SerializeField] private float knockbackForce = 12.0f;
@@ -61,6 +69,15 @@ public class SheepController : MonoBehaviour
     private Transform visualTransform;
     private bool isKnocked;
     private Coroutine recoveryCoroutine;
+
+    // Surface Cache
+    private readonly List<Tilemap> groundTilemaps = new List<Tilemap>();
+    private readonly List<Tilemap> boundaryTilemaps = new List<Tilemap>();
+    private readonly List<Tilemap> holeTilemaps = new List<Tilemap>();
+    private readonly List<Collider2D> groundColliders = new List<Collider2D>();
+    private readonly List<Collider2D> boundaryColliders = new List<Collider2D>();
+    private readonly List<Collider2D> holeColliders = new List<Collider2D>();
+    private float lastTilemapCacheTime = -10f;
 
     private static readonly int IsWalkingHash = Animator.StringToHash("isWalking");
     private static readonly int IsEatingHash = Animator.StringToHash("isEating");
@@ -96,14 +113,35 @@ public class SheepController : MonoBehaviour
 
     private void Start()
     {
+        CacheSceneSurfaces(true);
         EnterIdleState();
     }
 
     private void Update()
     {
-        if (currentState == SheepState.Knocked || currentState == SheepState.Recovering)
+        // 1. If knocked or recovering, check if landed in a hole
+        if (currentState == SheepState.Knocked)
         {
-            // State transitions handled by coroutines
+            if (rb != null && rb.linearVelocity.sqrMagnitude < 0.1f && IsPositionOnHole(transform.position))
+            {
+                RespawnAtOrigin();
+            }
+            return;
+        }
+
+        if (currentState == SheepState.Recovering)
+        {
+            if (IsPositionOnHole(transform.position))
+            {
+                RespawnAtOrigin();
+            }
+            return;
+        }
+
+        // 2. Continuous Hole Check: If on a hole tilemap at any time, respawn back at origin
+        if (IsPositionOnHole(transform.position))
+        {
+            RespawnAtOrigin();
             return;
         }
 
@@ -133,8 +171,16 @@ public class SheepController : MonoBehaviour
         UpdateAnimatorParams();
     }
 
+    private bool isFacingRight = false;
+
     private void UpdateIdle()
     {
+        // Smoothly return body rotation upright while idle
+        if (transform.rotation != Quaternion.identity)
+        {
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.identity, turnSpeed * Time.deltaTime);
+        }
+
         if (stateTimer <= 0f)
         {
             if (Random.value < eatProbability)
@@ -153,10 +199,10 @@ public class SheepController : MonoBehaviour
         currentState = SheepState.Walking;
         stateTimer = Random.Range(minWalkDuration, maxWalkDuration);
 
-        Vector2 randomOffset = Random.insideUnitCircle * wanderRadius;
-        targetPosition = originPosition + randomOffset;
+        targetPosition = PickValidWanderDestination();
 
-        UpdateFacingDirection(targetPosition.x - transform.position.x);
+        Vector2 direction = targetPosition - (Vector2)transform.position;
+        ApplyRotationAndFacing(direction);
         UpdateAnimatorParams();
     }
 
@@ -179,9 +225,35 @@ public class SheepController : MonoBehaviour
             return;
         }
 
-        UpdateFacingDirection(direction.x);
-        Vector2 moveStep = direction.normalized * (walkSpeed * Time.deltaTime);
-        transform.position = currentPos + moveStep;
+        Vector2 moveDir = direction.normalized;
+        ApplyRotationAndFacing(direction);
+
+        float stepDist = walkSpeed * Time.deltaTime;
+        Vector2 moveStep = moveDir * stepDist;
+        Vector2 nextPos = currentPos + moveStep;
+
+        // Lookahead 0.35f in front of movement to stop BEFORE reaching hole or stepping off ground/boundary
+        Vector2 lookAheadPos = currentPos + moveDir * (stepDist + 0.35f);
+
+        if (IsPositionOnHole(nextPos) || IsPositionOnHole(lookAheadPos))
+        {
+            if (IsPositionOnHole(currentPos))
+            {
+                RespawnAtOrigin();
+                return;
+            }
+            EnterIdleState();
+            return;
+        }
+
+        if (!IsPositionWalkable(nextPos) || !IsPositionWalkable(lookAheadPos))
+        {
+            // Reached edge of valid ground/boundary: stop walking and enter idle
+            EnterIdleState();
+            return;
+        }
+
+        transform.position = nextPos;
     }
 
     private void EnterEatingState()
@@ -194,9 +266,64 @@ public class SheepController : MonoBehaviour
 
     private void UpdateEating()
     {
+        // Smoothly return body rotation upright while eating
+        if (transform.rotation != Quaternion.identity)
+        {
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.identity, turnSpeed * Time.deltaTime);
+        }
+
         if (stateTimer <= 0f)
         {
             EnterWalkingState();
+        }
+    }
+
+    private void ApplyRotationAndFacing(Vector2 direction)
+    {
+        if (direction.sqrMagnitude < 0.001f) return;
+
+        // 1. Determine horizontal facing (Left vs Right)
+        if (direction.x > 0.05f)
+        {
+            isFacingRight = true;
+        }
+        else if (direction.x < -0.05f)
+        {
+            isFacingRight = false;
+        }
+
+        // 2. Set sprite horizontal flip
+        if (spriteRenderer != null)
+        {
+            // Base sprite faces Left:
+            // Moving Right (isFacingRight == true) -> flipX = true
+            // Moving Left (isFacingRight == false) -> flipX = false
+            spriteRenderer.flipX = flipXFacingLeft ? isFacingRight : !isFacingRight;
+        }
+
+        // 3. Smooth directional tilt/rotation without ever going upside-down
+        if (rotateInMovementDirection)
+        {
+            float moveAngle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
+            float targetRotZ;
+
+            if (isFacingRight)
+            {
+                // Head faces East (0 deg) when flipped Right.
+                // Angle for right-half plane is within [-90, +90] deg.
+                targetRotZ = moveAngle;
+            }
+            else
+            {
+                // Head faces West (180 deg) when unflipped (Left).
+                // Angle for left-half plane relative to West (180 deg).
+                targetRotZ = Mathf.DeltaAngle(180f, moveAngle);
+            }
+
+            // Smoothly rotate body towards target angle
+            float currentRotZ = transform.eulerAngles.z;
+            float smoothRotZ = Mathf.MoveTowardsAngle(currentRotZ, targetRotZ, turnSpeed * Time.deltaTime);
+            transform.rotation = Quaternion.Euler(0f, 0f, smoothRotZ);
         }
     }
 
@@ -243,14 +370,481 @@ public class SheepController : MonoBehaviour
         }
     }
 
+    #region Surface and Walkability Queries
+
+    public void CacheSceneSurfaces(bool force = false)
+    {
+        if (!force && Time.time - lastTilemapCacheTime < 3f && (groundTilemaps.Count > 0 || boundaryTilemaps.Count > 0 || holeTilemaps.Count > 0))
+        {
+            return;
+        }
+
+        lastTilemapCacheTime = Time.time;
+        groundTilemaps.Clear();
+        boundaryTilemaps.Clear();
+        holeTilemaps.Clear();
+        groundColliders.Clear();
+        boundaryColliders.Clear();
+        holeColliders.Clear();
+
+        Tilemap[] allTilemaps = UnityEngine.Object.FindObjectsByType<Tilemap>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+        foreach (var tm in allTilemaps)
+        {
+            if (tm == null) continue;
+            GameObject go = tm.gameObject;
+
+            if (IsHoleObject(go))
+            {
+                holeTilemaps.Add(tm);
+            }
+            else if (IsBoundaryObject(go))
+            {
+                boundaryTilemaps.Add(tm);
+            }
+            else if (IsGroundObject(go))
+            {
+                groundTilemaps.Add(tm);
+            }
+        }
+
+        Collider2D[] allColliders = UnityEngine.Object.FindObjectsByType<Collider2D>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+        foreach (var c in allColliders)
+        {
+            if (c == null || c.gameObject == gameObject) continue;
+            GameObject go = c.gameObject;
+
+            if (IsHoleObject(go))
+            {
+                holeColliders.Add(c);
+            }
+            else if (IsBoundaryObject(go))
+            {
+                boundaryColliders.Add(c);
+            }
+            else if (IsGroundObject(go))
+            {
+                groundColliders.Add(c);
+            }
+        }
+    }
+
+    public bool IsHoleObject(GameObject go)
+    {
+        if (go == null) return false;
+
+        // Exclude purely visual background tilemaps/objects explicitly
+        string objName = go.name.ToLower();
+        if (objName.Contains("background") || objName.Contains("waterbackground"))
+        {
+            return false;
+        }
+
+        Transform current = go.transform;
+        while (current != null)
+        {
+            GameObject candidate = current.gameObject;
+            string cName = candidate.name.ToLower();
+            if (cName.Contains("background") || cName.Contains("waterbackground"))
+            {
+                return false;
+            }
+
+            if (candidate.CompareTag("Hole")) return true;
+
+            int layer = candidate.layer;
+            string layerName = LayerMask.LayerToName(layer);
+            if (!string.IsNullOrEmpty(layerName) && (string.Equals(layerName, "Hole", System.StringComparison.OrdinalIgnoreCase) || string.Equals(layerName, "Water", System.StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            // Check if it's named Hole/Holes with a Collider or Tilemap
+            if (cName == "hole" || cName == "holes" || cName == "water" || cName.StartsWith("hole") || cName.StartsWith("water"))
+            {
+                if (candidate.GetComponent<Collider2D>() != null || candidate.GetComponent<Tilemap>() != null)
+                {
+                    return true;
+                }
+            }
+
+            current = current.parent;
+        }
+
+        if (go.TryGetComponent<Rigidbody2D>(out var rbComp) && rbComp.gameObject != go)
+        {
+            return IsHoleObject(rbComp.gameObject);
+        }
+
+        return false;
+    }
+
+    public bool IsBoundaryObject(GameObject go)
+    {
+        if (go == null) return false;
+
+        Transform current = go.transform;
+        while (current != null)
+        {
+            GameObject candidate = current.gameObject;
+            if (candidate.CompareTag("Boundary")) return true;
+            string layerName = LayerMask.LayerToName(candidate.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Boundary", System.StringComparison.OrdinalIgnoreCase)) return true;
+            string n = candidate.name.ToLower();
+            if (n.Contains("boundary")) return true;
+            current = current.parent;
+        }
+
+        return false;
+    }
+
+    public bool IsGroundObject(GameObject go)
+    {
+        if (go == null) return false;
+
+        Transform current = go.transform;
+        while (current != null)
+        {
+            GameObject candidate = current.gameObject;
+            if (candidate.CompareTag("Ground")) return true;
+            string layerName = LayerMask.LayerToName(candidate.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Ground", System.StringComparison.OrdinalIgnoreCase)) return true;
+            string n = candidate.name.ToLower();
+            if (n.Contains("ground") || n.Contains("road") || n.Contains("track")) return true;
+            current = current.parent;
+        }
+
+        return false;
+    }
+
+    public bool IsPositionOnHole(Vector2 pos)
+    {
+        CacheSceneSurfaces();
+
+        // 1. Check Hole Tilemaps (using cell lookup)
+        for (int i = 0; i < holeTilemaps.Count; i++)
+        {
+            Tilemap tm = holeTilemaps[i];
+            if (tm != null && tm.isActiveAndEnabled)
+            {
+                Vector3Int cell = tm.WorldToCell(pos);
+                if (tm.HasTile(cell)) return true;
+
+                // Also check perimeter offsets to cover sheep radius (0.25f)
+                if (tm.HasTile(tm.WorldToCell(pos + new Vector2(0.25f, 0f))) ||
+                    tm.HasTile(tm.WorldToCell(pos + new Vector2(-0.25f, 0f))) ||
+                    tm.HasTile(tm.WorldToCell(pos + new Vector2(0f, 0.25f))) ||
+                    tm.HasTile(tm.WorldToCell(pos + new Vector2(0f, -0.25f))))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // 2. Check 2D Physics OverlapPointAll
+        Collider2D[] hits = Physics2D.OverlapPointAll(pos);
+        if (hits != null)
+        {
+            foreach (var hit in hits)
+            {
+                if (hit != null && hit.gameObject != gameObject && IsHoleObject(hit.gameObject)) return true;
+            }
+        }
+
+        // 3. Check OverlapCircleAll with sheep radius
+        Collider2D[] circleHits = Physics2D.OverlapCircleAll(pos, 0.35f);
+        if (circleHits != null)
+        {
+            foreach (var hit in circleHits)
+            {
+                if (hit != null && hit.gameObject != gameObject && IsHoleObject(hit.gameObject)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool IsPositionWalkable(Vector2 pos)
+    {
+        // 1. Hole is NEVER walkable
+        if (IsPositionOnHole(pos)) return false;
+
+        // 2. Trap is NEVER walkable
+        Collider2D[] trapCheck = Physics2D.OverlapCircleAll(pos, 0.35f);
+        if (trapCheck != null)
+        {
+            foreach (var hit in trapCheck)
+            {
+                if (hit != null && hit.gameObject != gameObject)
+                {
+                    if (hit.CompareTag("Trap") || hit.gameObject.name.ToLower().Contains("trap") || hit.gameObject.name.ToLower().Contains("saw") || hit.gameObject.name.ToLower().Contains("spike"))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        CacheSceneSurfaces();
+
+        // 3. Must be on Ground or Boundary Tilemap / Collider
+        bool onGroundOrBoundary = false;
+
+        // Check Boundary Tilemaps
+        for (int i = 0; i < boundaryTilemaps.Count; i++)
+        {
+            Tilemap tm = boundaryTilemaps[i];
+            if (tm != null && tm.isActiveAndEnabled)
+            {
+                Vector3Int cell = tm.WorldToCell(pos);
+                if (tm.HasTile(cell))
+                {
+                    onGroundOrBoundary = true;
+                    break;
+                }
+            }
+        }
+
+        // Check Ground Tilemaps
+        if (!onGroundOrBoundary)
+        {
+            for (int i = 0; i < groundTilemaps.Count; i++)
+            {
+                Tilemap tm = groundTilemaps[i];
+                if (tm != null && tm.isActiveAndEnabled)
+                {
+                    Vector3Int cell = tm.WorldToCell(pos);
+                    if (tm.HasTile(cell))
+                    {
+                        onGroundOrBoundary = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Check Boundary Colliders
+        if (!onGroundOrBoundary)
+        {
+            for (int i = 0; i < boundaryColliders.Count; i++)
+            {
+                Collider2D c = boundaryColliders[i];
+                if (c != null && c.isActiveAndEnabled && c.OverlapPoint(pos))
+                {
+                    onGroundOrBoundary = true;
+                    break;
+                }
+            }
+        }
+
+        // Check Ground Colliders
+        if (!onGroundOrBoundary)
+        {
+            for (int i = 0; i < groundColliders.Count; i++)
+            {
+                Collider2D c = groundColliders[i];
+                if (c != null && c.isActiveAndEnabled && c.OverlapPoint(pos))
+                {
+                    onGroundOrBoundary = true;
+                    break;
+                }
+            }
+        }
+
+        // Check Point and Circle Overlaps for Ground / Boundary
+        if (!onGroundOrBoundary)
+        {
+            Collider2D[] pointHits = Physics2D.OverlapPointAll(pos);
+            if (pointHits != null)
+            {
+                foreach (var hit in pointHits)
+                {
+                    if (hit != null && hit.gameObject != gameObject && (IsBoundaryObject(hit.gameObject) || IsGroundObject(hit.gameObject)))
+                    {
+                        onGroundOrBoundary = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!onGroundOrBoundary)
+        {
+            Collider2D[] circleHits = Physics2D.OverlapCircleAll(pos, 0.25f);
+            if (circleHits != null)
+            {
+                foreach (var hit in circleHits)
+                {
+                    if (hit != null && hit.gameObject != gameObject && (IsBoundaryObject(hit.gameObject) || IsGroundObject(hit.gameObject)))
+                    {
+                        onGroundOrBoundary = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return onGroundOrBoundary;
+    }
+
+    private Vector2 PickValidWanderDestination()
+    {
+        Vector2 bestCandidate = originPosition;
+        bool found = false;
+
+        // Sample candidate points within wanderRadius
+        for (int i = 0; i < 30; i++)
+        {
+            Vector2 randomOffset = Random.insideUnitCircle * wanderRadius;
+            if (randomOffset.sqrMagnitude < 0.25f) randomOffset = randomOffset.normalized * 0.5f;
+
+            Vector2 candidate = originPosition + randomOffset;
+
+            if (IsPositionWalkable(candidate))
+            {
+                if (!IsPathCrossingHole(transform.position, candidate))
+                {
+                    bestCandidate = candidate;
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            Vector2 toOrigin = (originPosition - (Vector2)transform.position);
+            if (toOrigin.magnitude > 0.5f)
+            {
+                Vector2 stepTowardsOrigin = (Vector2)transform.position + toOrigin.normalized * 1.0f;
+                if (IsPositionWalkable(stepTowardsOrigin) && !IsPathCrossingHole(transform.position, stepTowardsOrigin))
+                {
+                    bestCandidate = stepTowardsOrigin;
+                }
+                else if (IsPositionWalkable(originPosition))
+                {
+                    bestCandidate = originPosition;
+                }
+                else
+                {
+                    bestCandidate = transform.position;
+                }
+            }
+            else
+            {
+                bestCandidate = transform.position;
+            }
+        }
+
+        return bestCandidate;
+    }
+
+    private bool IsPathCrossingHole(Vector2 from, Vector2 to)
+    {
+        int samples = 10;
+        for (int i = 1; i <= samples; i++)
+        {
+            float t = (float)i / (samples + 1);
+            Vector2 point = Vector2.Lerp(from, to, t);
+            if (IsPositionOnHole(point) || !IsPositionWalkable(point))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public void RespawnAtOrigin()
+    {
+        Debug.Log($"[SheepController] Sheep entered Hole! Respawning back at origin {originPosition}");
+
+        if (recoveryCoroutine != null)
+        {
+            StopCoroutine(recoveryCoroutine);
+            recoveryCoroutine = null;
+        }
+
+        Vector3 currentPos = transform.position;
+
+        // Spawn splash effect at hole location
+        GameObject holeFxPrefab = Resources.Load<GameObject>("SplashEffect") ?? Resources.Load<GameObject>("Smoke") ?? hitEffectPrefab;
+        if (holeFxPrefab != null)
+        {
+            GameObject fx = Instantiate(holeFxPrefab, currentPos, Quaternion.identity);
+            Destroy(fx, 2.0f);
+        }
+
+        // Teleport back to origin
+        transform.position = originPosition;
+        transform.rotation = Quaternion.identity;
+        transform.localScale = initialScale;
+
+        if (visualTransform != null)
+        {
+            visualTransform.localPosition = initialVisualPos;
+            visualTransform.localRotation = Quaternion.identity;
+        }
+
+        if (rb != null)
+        {
+            rb.bodyType = RigidbodyType2D.Kinematic;
+            rb.gravityScale = 0f;
+            rb.linearVelocity = Vector2.zero;
+            rb.angularVelocity = 0f;
+        }
+
+        if (col != null) col.enabled = true;
+        if (animator != null) animator.enabled = true;
+
+        // Spawn respawn smoke effect at origin
+        GameObject spawnFx = hitEffectPrefab != null ? hitEffectPrefab : Resources.Load<GameObject>("Smoke");
+        if (spawnFx != null)
+        {
+            GameObject fx2 = Instantiate(spawnFx, (Vector3)originPosition, Quaternion.identity);
+            Destroy(fx2, 2.0f);
+        }
+
+        isKnocked = false;
+        EnterIdleState();
+    }
+
+    #endregion
+
     private void OnCollisionEnter2D(Collision2D collision)
     {
+        if (IsHoleObject(collision.gameObject))
+        {
+            RespawnAtOrigin();
+            return;
+        }
         HandleCarImpact(collision.gameObject, collision.relativeVelocity);
+    }
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        if (IsHoleObject(collision.gameObject))
+        {
+            RespawnAtOrigin();
+            return;
+        }
     }
 
     private void OnTriggerEnter2D(Collider2D other)
     {
+        if (IsHoleObject(other.gameObject))
+        {
+            RespawnAtOrigin();
+            return;
+        }
         HandleCarImpact(other.gameObject, Vector2.zero);
+    }
+
+    private void OnTriggerStay2D(Collider2D other)
+    {
+        if (IsHoleObject(other.gameObject))
+        {
+            RespawnAtOrigin();
+            return;
+        }
     }
 
     private void HandleCarImpact(GameObject hitObj, Vector2 relativeVel)
@@ -342,6 +936,13 @@ public class SheepController : MonoBehaviour
 
         // Wait a short moment for landing physics
         yield return new WaitForSeconds(0.2f);
+
+        // Check if landed in a hole during knockback
+        if (IsPositionOnHole(transform.position))
+        {
+            RespawnAtOrigin();
+            yield break;
+        }
 
         // 2. Settle on ground: stop physics movement
         if (rb != null)
