@@ -68,7 +68,7 @@ public class LeaderboardUI : MonoBehaviour
         }
         if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
-            NetworkRaceManager.Instance.NotifyMatchEndedRpc(localClientId);
+            NetworkRaceManager.Instance.NotifyPlayerReachedEndingRpc(localClientId);
         }
 
         SetupUIReferences();
@@ -380,14 +380,17 @@ public class LeaderboardUI : MonoBehaviour
     {
         if (LeaderboardManager.Instance == null) return;
 
-        float totalTime = LeaderboardManager.Instance.TotalRunTime;
+        float maxBudget = LeaderboardManager.Instance.GetOverallRunBudgetSeconds();
+        float totalTime = Mathf.Clamp(LeaderboardManager.Instance.TotalRunTime, 0f, maxBudget);
         int totalDeaths = LeaderboardManager.Instance.TotalRunDeaths;
         int totalTimeouts = LeaderboardManager.Instance.TotalRunTimeouts;
         float score = LeaderboardManager.Instance.CalculatePerformanceScore(totalTime, totalDeaths, totalTimeouts);
         string grade = LeaderboardManager.Instance.CalculateGrade(totalTime, totalDeaths, totalTimeouts);
 
         TimeSpan totalSpan = TimeSpan.FromSeconds(totalTime);
-        string formattedTotalTime = string.Format("{0:D2}:{1:D2}", totalSpan.Minutes, totalSpan.Seconds);
+        int displayMinutes = Mathf.Min(5, (int)totalSpan.TotalMinutes);
+        int displaySeconds = totalSpan.Seconds;
+        string formattedTotalTime = string.Format("{0:D2}:{1:D2}", displayMinutes, displaySeconds);
 
         if (titleText != null)
         {

@@ -332,6 +332,8 @@ MonoBehaviour:
   enableSpeedOverride: 1
   levelSpeed: 9
   levelTurnSpeed: 140
+  enableScaleOverride: 1
+  levelVehicleScale: {x: 4, y: 4, z: 1}
 --- !u!4 &60978037
 Transform:
   m_ObjectHideFlags: 0

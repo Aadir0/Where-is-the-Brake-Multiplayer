@@ -269,21 +269,6 @@ public class FinishLine : MonoBehaviour
                     LevelTimer.Instance.StopLocalTimerForPlayer(elapsedTime);
                 }
                 TriggerWinLocal(playerT, elapsedTime, deaths);
-
-                string currentScene = SceneManager.GetActiveScene().name;
-                string nextScene = GetNextSceneName(currentScene);
-                if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
-                {
-                    ulong localId = (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening) ? NetworkManager.Singleton.LocalClientId : 0;
-                    if (carCtrl != null && carCtrl.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-                    {
-                        carCtrl.NotifyMatchEndedRpc(localId);
-                    }
-                    if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-                    {
-                        NetworkRaceManager.Instance.NotifyMatchEndedRpc(localId);
-                    }
-                }
             }
         }
     }
@@ -570,43 +555,21 @@ public class FinishLine : MonoBehaviour
 
         StartCoroutine(TransitionWatchdogRoutine(nextScene));
 
-        // If in multiplayer, coordinate level transition via server
         if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
         {
+            ulong localId = NetworkManager.Singleton.LocalClientId;
+
             if (nextScene.Equals("Ending", StringComparison.OrdinalIgnoreCase))
             {
-                ulong localId = NetworkManager.Singleton.LocalClientId;
-                if (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.IsSpawned)
-                {
-                    NetworkCarController.LocalPlayerInstance.NotifyMatchEndedRpc(localId);
-                }
                 if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned)
                 {
-                    NetworkRaceManager.Instance.NotifyMatchEndedRpc(localId);
+                    NetworkRaceManager.Instance.NotifyPlayerReachedEndingRpc(localId);
                 }
             }
 
-            if (NetworkManager.Singleton.IsServer)
+            if (NetworkCarController.LocalPlayerInstance != null && NetworkCarController.LocalPlayerInstance.IsSpawned)
             {
-                if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned)
-                {
-                    NetworkRaceManager.Instance.LoadNextLevelServer();
-                    return;
-                }
-
-                if (NetworkManager.Singleton.SceneManager != null)
-                {
-                    var status = NetworkManager.Singleton.SceneManager.LoadScene(nextScene, LoadSceneMode.Single);
-                    if (status == SceneEventProgressStatus.Started) return;
-                }
-            }
-            else
-            {
-                if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsSpawned)
-                {
-                    NetworkRaceManager.Instance.RequestLoadNextLevelServerRpc();
-                    return;
-                }
+                NetworkCarController.LocalPlayerInstance.UpdateCurrentSceneServerRpc(nextScene);
             }
         }
 

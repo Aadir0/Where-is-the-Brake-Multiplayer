@@ -146,6 +146,20 @@ public class LeaderboardManager : MonoBehaviour
             }
         }
 
+        // If cleared time already exceeds budget, scale cleared times down to fit budget
+        if (clearedSum > totalBudget && clearedSum > 0.01f)
+        {
+            float scale = totalBudget / clearedSum;
+            foreach (var stat in levelStats)
+            {
+                if (!stat.isTimeout)
+                {
+                    stat.timeSeconds *= scale;
+                }
+            }
+            clearedSum = totalBudget;
+        }
+
         if (timeoutCount > 0)
         {
             float remainingTime = Mathf.Max(0f, totalBudget - clearedSum);
@@ -174,6 +188,9 @@ public class LeaderboardManager : MonoBehaviour
             totalRunDeaths += stat.deaths;
             if (stat.isTimeout) totalRunTimeouts++;
         }
+
+        float totalBudget = GetOverallRunBudgetSeconds();
+        totalRunTime = Mathf.Clamp(totalRunTime, 0f, totalBudget);
     }
 
     public float CalculatePerformanceScore(float timeSeconds, int deaths, int timeouts = 0)

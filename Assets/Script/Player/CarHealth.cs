@@ -207,46 +207,114 @@ public class CarHealth : NetworkBehaviour
     public bool IsTrapObject(GameObject obj)
     {
         if (obj == null) return false;
-        GameObject[] candidates = new GameObject[]
-        {
-            obj,
-            obj.transform.parent != null ? obj.transform.parent.gameObject : null,
-            obj.transform.root != null ? obj.transform.root.gameObject : null,
-            obj.GetComponent<Rigidbody2D>() != null ? obj.GetComponent<Rigidbody2D>().gameObject : null
-        };
 
-        foreach (GameObject candidate in candidates)
+        Transform current = obj.transform;
+        while (current != null)
         {
-            if (candidate == null) continue;
+            GameObject candidate = current.gameObject;
             if (candidate.CompareTag("Trap")) return true;
             string layerName = LayerMask.LayerToName(candidate.layer);
             if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase)) return true;
             string n = candidate.name.ToLower();
-            if (n.Contains("trap") || n.Contains("saw") || n.Contains("spike")) return true;
+            if (n.Contains("trap") || n.Contains("saw") || n.Contains("spike") || n.Contains("blade") || n.Contains("hazard")) return true;
+            current = current.parent;
         }
+
+        // Also check immediate children in case the collider is on the parent container
+        for (int i = 0; i < obj.transform.childCount; i++)
+        {
+            Transform child = obj.transform.GetChild(i);
+            if (child.CompareTag("Trap")) return true;
+            string layerName = LayerMask.LayerToName(child.gameObject.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase)) return true;
+            string n = child.name.ToLower();
+            if (n.Contains("trap") || n.Contains("saw") || n.Contains("spike") || n.Contains("blade") || n.Contains("hazard")) return true;
+        }
+
+        if (obj.TryGetComponent<Rigidbody2D>(out var rb) && rb.gameObject != obj)
+        {
+            return IsTrapObject(rb.gameObject);
+        }
+
+        return false;
+    }
+
+    public bool CheckAnyOverlappingTrap()
+    {
+        // 1. Direct collider overlap check
+        if (carCollider != null)
+        {
+            List<Collider2D> colHits = new List<Collider2D>();
+            ContactFilter2D filter = new ContactFilter2D { useTriggers = true, useLayerMask = false };
+            int count = carCollider.Overlap(filter, colHits);
+            for (int i = 0; i < count; i++)
+            {
+                if (colHits[i] != null && colHits[i].gameObject != gameObject && IsTrapObject(colHits[i].gameObject))
+                {
+                    return true;
+                }
+            }
+        }
+
+        Vector2 pos = transform.position;
+
+        // 2. Point overlap
+        Collider2D[] pointHits = Physics2D.OverlapPointAll(pos);
+        if (pointHits != null)
+        {
+            foreach (var hit in pointHits)
+            {
+                if (hit != null && hit.gameObject != gameObject && IsTrapObject(hit.gameObject)) return true;
+            }
+        }
+
+        // 3. Circle overlap
+        Collider2D[] circleHits = Physics2D.OverlapCircleAll(pos, 0.8f);
+        if (circleHits != null)
+        {
+            foreach (var hit in circleHits)
+            {
+                if (hit != null && hit.gameObject != gameObject && IsTrapObject(hit.gameObject)) return true;
+            }
+        }
+
+        // 4. Box bounds overlap
+        if (carCollider != null)
+        {
+            Collider2D[] boxHits = Physics2D.OverlapBoxAll(carCollider.bounds.center, carCollider.bounds.size * 1.3f, transform.eulerAngles.z);
+            if (boxHits != null)
+            {
+                foreach (var hit in boxHits)
+                {
+                    if (hit != null && hit.gameObject != gameObject && IsTrapObject(hit.gameObject)) return true;
+                }
+            }
+        }
+
         return false;
     }
 
     public bool IsHoleObject(GameObject obj)
     {
         if (obj == null) return false;
-        GameObject[] candidates = new GameObject[]
-        {
-            obj,
-            obj.transform.parent != null ? obj.transform.parent.gameObject : null,
-            obj.transform.root != null ? obj.transform.root.gameObject : null,
-            obj.GetComponent<Rigidbody2D>() != null ? obj.GetComponent<Rigidbody2D>().gameObject : null
-        };
 
-        foreach (GameObject candidate in candidates)
+        Transform current = obj.transform;
+        while (current != null)
         {
-            if (candidate == null) continue;
+            GameObject candidate = current.gameObject;
             if (candidate.CompareTag("Hole")) return true;
             string layerName = LayerMask.LayerToName(candidate.layer);
             if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase)) return true;
             string n = candidate.name.ToLower();
             if (n.Contains("hole") || n.Contains("water") || n.Contains("lava") || n.Contains("pit")) return true;
+            current = current.parent;
         }
+
+        if (obj.TryGetComponent<Rigidbody2D>(out var rb) && rb.gameObject != obj)
+        {
+            return IsHoleObject(rb.gameObject);
+        }
+
         return false;
     }
 
@@ -315,45 +383,9 @@ public class CarHealth : NetworkBehaviour
         {
             localDeathRequested = true;
 
-            // Determine if this is a Trap collision by checking the collider's own tag first,
-            // then walk up the hierarchy. This is the most reliable approach.
-            bool isTrap = false;
-            if (other != null)
-            {
-                // Direct tag check on the collider's GameObject (most reliable)
-                if (other.gameObject.CompareTag("Trap"))
-                {
-                    isTrap = true;
-                }
-                // Check parent
-                else if (other.transform.parent != null && other.transform.parent.gameObject.CompareTag("Trap"))
-                {
-                    isTrap = true;
-                }
-                // Check root
-                else if (other.transform.root != null && other.transform.root.gameObject.CompareTag("Trap"))
-                {
-                    isTrap = true;
-                }
-                // Fallback: name-based check
-                else
-                {
-                    string objName = other.gameObject.name.ToLower();
-                    if (objName.Contains("trap") || objName.Contains("saw") || objName.Contains("spike"))
-                    {
-                        isTrap = true;
-                    }
-                }
-                // Fallback: layer-based check
-                if (!isTrap)
-                {
-                    string layerName = LayerMask.LayerToName(other.gameObject.layer);
-                    if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase))
-                    {
-                        isTrap = true;
-                    }
-                }
-            }
+            // Robust trap detection: check the collider's GameObject AND full hierarchy, AND sweep surroundings.
+            // If the car is touching ANY trap (even if contact was with a Hole/Water tile below the trap), TRAP TAKES PRIORITY!
+            bool isTrap = IsTrapObject(other?.gameObject) || CheckAnyOverlappingTrap();
 
             Debug.Log($"[CarHealth] DEATH CONTACT: obj='{(other != null ? other.gameObject.name : "null")}', " +
                       $"tag='{(other != null ? other.gameObject.tag : "null")}', " +
@@ -456,21 +488,8 @@ public class CarHealth : NetworkBehaviour
             {
                 isOverlappingHole = true;
                 localDeathRequested = true;
-                bool isTrap = false;
-                if (carCollider != null)
-                {
-                    List<Collider2D> colHits = new List<Collider2D>();
-                    ContactFilter2D f = new ContactFilter2D { useTriggers = true, useLayerMask = false };
-                    int c = carCollider.Overlap(f, colHits);
-                    for (int i = 0; i < c; i++)
-                    {
-                        if (colHits[i] != null && IsTrapObject(colHits[i].gameObject))
-                        {
-                            isTrap = true;
-                            break;
-                        }
-                    }
-                }
+                bool isTrap = CheckAnyOverlappingTrap();
+
                 Debug.Log($"[CarHealth DANGER] Hole/Trap detected after jump expired! isTrap={isTrap}, Executing Death Sequence (IsOwner: {IsOwner})");
                 RequestTakeDamageRpc(maxHealth);
                 PlayDeathEffectsRpc(transform.position, UnityEngine.SceneManagement.SceneManager.GetActiveScene().name, isTrap);
@@ -487,13 +506,10 @@ public class CarHealth : NetworkBehaviour
 
     public void TakeDamageServer(int amount)
     {
-        if (!IsServer || isDead.Value) return;
+        if (!IsServer) return;
+        if (isDead.Value) return;
 
-        currentHealth.Value = Mathf.Max(0, currentHealth.Value - amount);
-        if (currentHealth.Value <= 0)
-        {
-            DieServerAuthoritative();
-        }
+        DieServerAuthoritative();
     }
 
     private void DieServerAuthoritative()
@@ -533,11 +549,38 @@ public class CarHealth : NetworkBehaviour
         if (effectPrefab != null)
         {
             GameObject fxObj = Instantiate(effectPrefab, finalSpawnPosition, Quaternion.identity);
+            
+            // Ensure death effect is rendered on top of everything
+            SpriteRenderer sr = fxObj.GetComponent<SpriteRenderer>() ?? fxObj.GetComponentInChildren<SpriteRenderer>();
+            if (sr != null)
+            {
+                sr.sortingLayerName = "Player";
+                sr.sortingOrder = 50;
+            }
+            Renderer[] rends = fxObj.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in rends)
+            {
+                if (r != null)
+                {
+                    r.sortingLayerName = "Player";
+                    r.sortingOrder = 50;
+                }
+            }
+
             StartCoroutine(AutoCleanEffectRoutine(fxObj));
         }
         else if (smokeEffect != null)
         {
             GameObject smokeObj = Instantiate(smokeEffect, finalSpawnPosition, Quaternion.identity);
+            Renderer[] rends = smokeObj.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in rends)
+            {
+                if (r != null)
+                {
+                    r.sortingLayerName = "Player";
+                    r.sortingOrder = 50;
+                }
+            }
             StartCoroutine(AutoCleanEffectRoutine(smokeObj));
         }
 
@@ -547,7 +590,7 @@ public class CarHealth : NetworkBehaviour
             AudioSource.PlayClipAtPoint(deathSound, finalSpawnPosition, sfxVol);
         }
 
-        if (DeathMarkerManager.Instance != null)
+        if (DeathMarkerManager.Instance != null && (carController == null || carController.IsInSameSceneAsLocalPlayer()))
         {
             DeathMarkerManager.Instance.SpawnDeathMarker(finalSpawnPosition, OwnerClientId);
         }

@@ -21,6 +21,11 @@ public class LevelJumpSettings : MonoBehaviour
     [SerializeField, Min(1f)] private float levelSpeed = 8.5f;
     [SerializeField, Min(10f)] private float levelTurnSpeed = 220f;
 
+    [Header("Per-Level Vehicle Scale Settings")]
+    [Tooltip("Enable to override the car's scale for this scene.")]
+    [SerializeField] private bool enableScaleOverride = false;
+    [SerializeField] private Vector3 levelVehicleScale = Vector3.one;
+
     public bool EnableJumpOverride => enableJumpOverride;
     public float LevelJumpDuration => levelJumpDuration;
     public float LevelJumpCooldown => levelJumpCooldown;
@@ -29,6 +34,9 @@ public class LevelJumpSettings : MonoBehaviour
     public bool EnableSpeedOverride => enableSpeedOverride;
     public float LevelSpeed => levelSpeed;
     public float LevelTurnSpeed => levelTurnSpeed;
+
+    public bool EnableScaleOverride => enableScaleOverride;
+    public Vector3 LevelVehicleScale => levelVehicleScale;
 
     private void Awake()
     {

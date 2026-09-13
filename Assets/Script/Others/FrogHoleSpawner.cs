@@ -90,42 +90,53 @@ public class FrogHoleSpawner : MonoBehaviour
     {
         if (holeColliders.Count == 0) return;
 
-        // Pick a random hole
-        Collider2D randomHole = holeColliders[Random.Range(0, holeColliders.Count)];
-        if (randomHole == null || !randomHole.gameObject.activeInHierarchy) return;
-        // Choose a different hole as the jump destination
+        // Clean null/destroyed colliders
+        holeColliders.RemoveAll(c => c == null || !c.gameObject.activeInHierarchy);
+        if (holeColliders.Count == 0) return;
+
         int sourceIndex = Random.Range(0, holeColliders.Count);
         int targetIndex = sourceIndex;
         if (holeColliders.Count > 1)
         {
-            while (targetIndex == sourceIndex)
+            int attempts = 0;
+            while (targetIndex == sourceIndex && attempts < 10)
             {
                 targetIndex = Random.Range(0, holeColliders.Count);
+                attempts++;
             }
         }
+
         Collider2D sourceHole = holeColliders[sourceIndex];
         Collider2D targetHole = holeColliders[targetIndex];
 
         if (sourceHole == null || !sourceHole.gameObject.activeInHierarchy) return;
+        if (targetHole == null || !targetHole.gameObject.activeInHierarchy) targetHole = sourceHole;
 
         Bounds sourceBounds = sourceHole.bounds;
         Vector3 spawnPos = new Vector3(
-            Random.Range(sourceBounds.min.x + 0.2f, sourceBounds.max.x - 0.2f),
-            Random.Range(sourceBounds.min.y + 0.2f, sourceBounds.max.y - 0.2f),
+            Mathf.Clamp(sourceBounds.center.x + Random.Range(-sourceBounds.extents.x * 0.6f, sourceBounds.extents.x * 0.6f), sourceBounds.min.x, sourceBounds.max.x),
+            Mathf.Clamp(sourceBounds.center.y + Random.Range(-sourceBounds.extents.y * 0.6f, sourceBounds.extents.y * 0.6f), sourceBounds.min.y, sourceBounds.max.y),
             0f
         );
 
-        Vector3 targetCenter = targetHole != null ? targetHole.bounds.center : spawnPos;
-        Vector2 jumpDir = (targetCenter - spawnPos).normalized;
+        Bounds targetBounds = targetHole.bounds;
+        Vector3 targetLandPos = new Vector3(
+            Mathf.Clamp(targetBounds.center.x + Random.Range(-targetBounds.extents.x * 0.6f, targetBounds.extents.x * 0.6f), targetBounds.min.x, targetBounds.max.x),
+            Mathf.Clamp(targetBounds.center.y + Random.Range(-targetBounds.extents.y * 0.6f, targetBounds.extents.y * 0.6f), targetBounds.min.y, targetBounds.max.y),
+            0f
+        );
+
+        // If source and target are the same hole, ensure there's at least a minimum jump distance
+        if (sourceIndex == targetIndex && Vector3.Distance(spawnPos, targetLandPos) < 0.8f)
+        {
+            Vector2 offset = Random.insideUnitCircle.normalized * Mathf.Min(1.5f, sourceBounds.extents.magnitude * 0.8f);
+            targetLandPos = spawnPos + (Vector3)offset;
+        }
+
         FrogHoleJumper jumper = GetOrCreateFrog();
         if (jumper != null)
         {
-            Debug.Log($"[FrogHoleSpawner] Spawning frog at {spawnPos} jumping towards hole at {targetCenter}");
-            jumper.LaunchJump(spawnPos, jumpDir);
-        }
-        else
-        {
-            Debug.LogWarning("[FrogHoleSpawner] Failed to obtain a FrogHoleJumper instance.");
+            jumper.LaunchJumpToTarget(spawnPos, targetLandPos);
         }
     }
 

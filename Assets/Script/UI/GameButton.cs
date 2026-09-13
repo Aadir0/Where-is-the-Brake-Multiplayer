@@ -325,16 +325,14 @@ public class GameButton : MonoBehaviour
             CameraFollow.Instance.StopShake();
         }
 
-        if (Unity.Netcode.NetworkManager.Singleton != null &&
-            Unity.Netcode.NetworkManager.Singleton.IsListening &&
-            Unity.Netcode.NetworkManager.Singleton.IsServer &&
-            Unity.Netcode.NetworkManager.Singleton.SceneManager != null)
+        if (SceneTransitionManager.Instance != null)
         {
-            Unity.Netcode.NetworkManager.Singleton.SceneManager.LoadScene(SceneManager.GetActiveScene().name, LoadSceneMode.Single);
-            return;
+            SceneTransitionManager.Instance.LoadSceneWithTransition(SceneManager.GetActiveScene().name);
         }
-
-        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+        else
+        {
+            SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        }
     }
 
     public void ReturnToMainMenu()
@@ -361,9 +359,10 @@ public class GameButton : MonoBehaviour
     {
         if (NetworkRaceManager.Instance != null &&
             Unity.Netcode.NetworkManager.Singleton != null &&
-            Unity.Netcode.NetworkManager.Singleton.IsServer)
+            Unity.Netcode.NetworkManager.Singleton.IsListening)
         {
-            NetworkRaceManager.Instance.LoadNextLevelServer();
+            ulong localId = Unity.Netcode.NetworkManager.Singleton.LocalClientId;
+            NetworkRaceManager.Instance.RequestAdvancePlayerLevelServerRpc(localId);
             return;
         }
 

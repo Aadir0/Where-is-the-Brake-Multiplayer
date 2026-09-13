@@ -27,20 +27,15 @@ public class FireflyController : MonoBehaviour
 
     [Header("Flower Behaviour")]
     [SerializeField] private string flowerTag = "FireflyFlower";
-
-    [SerializeField, Range(0f, 1f)]
-    private float flowerChance = 0.25f;
-
+    [SerializeField, Range(0f, 1f)] private float flowerChance = 0.25f;
     [SerializeField] private float minimumFlowerDistance = 0.4f;
     [SerializeField] private float flowerDetectionRadius = 4f;
-
     [SerializeField] private float minimumSitTime = 2f;
     [SerializeField] private float maximumSitTime = 6f;
 
     [Header("Glow")]
     [SerializeField] private SpriteRenderer fireflySprite;
     [SerializeField] private Light2D fireflyLight;
-
     [SerializeField] private float minimumGlow = 0.15f;
     [SerializeField] private float maximumGlow = 0.45f;
     [SerializeField] private float glowSpeed = 2.5f;
@@ -48,39 +43,48 @@ public class FireflyController : MonoBehaviour
     [Header("Flying Shadow")]
     [SerializeField] private Transform shadow;
     [SerializeField] private SpriteRenderer shadowSprite;
-
     [SerializeField] private float shadowGroundOffset = 0.12f;
-
     [SerializeField] private float shadowMinAlpha = 0.12f;
     [SerializeField] private float shadowMaxAlpha = 0.30f;
-
     [SerializeField] private float shadowMinScale = 0.55f;
     [SerializeField] private float shadowMaxScale = 1f;
-
     [SerializeField] private float shadowRotation = 0f;
 
     [Header("Sprite")]
     [SerializeField] private bool flipSprite = true;
 
     private State currentState = State.Wandering;
-
     private Vector3 startingPosition;
     private Vector3 targetPosition;
     private Vector3 movementDirection;
-
     private float directionTimer;
     private float bobTimer;
     private float currentHoverHeight;
     private float currentRotationZ;
-
     private Tilemap flowerTilemap;
+    private int flowerSearchRadius;
+    private Vector3Int currentCell;
+
+    private void Awake()
+    {
+        fireflySprite ??= GetComponent<SpriteRenderer>() ?? GetComponentInChildren<SpriteRenderer>();
+        fireflyLight ??= GetComponent<Light2D>() ?? GetComponentInChildren<Light2D>();
+
+        if (shadow == null)
+        {
+            Transform ch = transform.Find("Shadow");
+            if (ch != null) shadow = ch;
+        }
+
+        shadowSprite ??= shadow != null ? (shadow.GetComponent<SpriteRenderer>() ?? shadow.GetComponentInChildren<SpriteRenderer>()) : null;
+    }
 
     private void Start()
     {
         startingPosition = transform.position;
-
         FindFlowerTilemap();
 
+        flowerSearchRadius = Mathf.CeilToInt(flowerDetectionRadius);
         ChooseNewDirection();
 
         bobTimer = Random.Range(0f, Mathf.PI * 2f);
@@ -100,11 +104,9 @@ public class FireflyController : MonoBehaviour
             case State.Wandering:
                 Wander();
                 break;
-
             case State.GoingToFlower:
                 MoveToFlower();
                 break;
-
             case State.SittingOnFlower:
                 break;
         }
@@ -115,29 +117,23 @@ public class FireflyController : MonoBehaviour
     private void Wander()
     {
         directionTimer -= Time.deltaTime;
-
         if (directionTimer <= 0f)
         {
             ChooseNewDirection();
         }
 
         bobTimer += Time.deltaTime * bobSpeed;
-
         currentHoverHeight = (Mathf.Sin(bobTimer) + 1f) * 0.5f;
 
-        Vector3 movement = movementDirection * moveSpeed * Time.deltaTime;
-        movement.y += Mathf.Sin(bobTimer) * bobAmount * Time.deltaTime;
-
-        Vector3 nextPosition = transform.position + movement;
-        Vector3 offset = nextPosition - startingPosition;
-
+        Vector3 offset = transform.position - startingPosition;
         if (offset.magnitude > wanderRadius)
         {
             Vector3 directionBack = (startingPosition - transform.position).normalized;
-            movementDirection = Vector3.Lerp(movementDirection, directionBack, 0.05f);
+            movementDirection = Vector3.Slerp(movementDirection, directionBack, Time.deltaTime * 2.0f);
             movementDirection.Normalize();
         }
 
+        Vector3 movement = movementDirection * (moveSpeed * Time.deltaTime);
         transform.position += movement;
 
         UpdateRotation();
@@ -153,7 +149,7 @@ public class FireflyController : MonoBehaviour
     {
         Vector2 randomDirection = Random.insideUnitCircle.normalized;
         movementDirection = new Vector3(randomDirection.x, randomDirection.y, 0f);
-        directionTimer = Random.Range(directionChangeTime * 0.5f, directionChangeTime * 1.5f);
+        directionTimer = Random.Range(directionChangeTime * 0.6f, directionChangeTime * 1.4f);
     }
 
     private void UpdateRotation()
@@ -170,36 +166,32 @@ public class FireflyController : MonoBehaviour
     private void FindFlowerTilemap()
     {
         GameObject flowerObject = GameObject.FindGameObjectWithTag(flowerTag);
-
-        if (flowerObject == null) return;
-
-        flowerTilemap = flowerObject.GetComponent<Tilemap>();
+        if (flowerObject != null)
+        {
+            flowerTilemap = flowerObject.GetComponent<Tilemap>();
+        }
     }
 
     private void TryFindFlower()
     {
         if (flowerTilemap == null) return;
 
-        Vector3Int currentCell = flowerTilemap.WorldToCell(transform.position);
-        int searchRadius = Mathf.CeilToInt(flowerDetectionRadius);
-
+        currentCell = flowerTilemap.WorldToCell(transform.position);
         Vector3 bestFlowerPosition = Vector3.zero;
-        float bestDistance = Mathf.Infinity;
+        float bestDistance = float.MaxValue;
         bool foundFlower = false;
 
-        for (int x = -searchRadius; x <= searchRadius; x++)
+        for (int x = -flowerSearchRadius; x <= flowerSearchRadius; x++)
         {
-            for (int y = -searchRadius; y <= searchRadius; y++)
+            for (int y = -flowerSearchRadius; y <= flowerSearchRadius; y++)
             {
                 Vector3Int cell = currentCell + new Vector3Int(x, y, 0);
-
                 if (!flowerTilemap.HasTile(cell)) continue;
 
                 Vector3 flowerPosition = flowerTilemap.GetCellCenterWorld(cell);
                 float distance = Vector3.Distance(transform.position, flowerPosition);
 
-                if (distance < minimumFlowerDistance) continue;
-                if (distance > flowerDetectionRadius) continue;
+                if (distance < minimumFlowerDistance || distance > flowerDetectionRadius) continue;
 
                 if (distance < bestDistance)
                 {
@@ -246,7 +238,6 @@ public class FireflyController : MonoBehaviour
         {
             float targetAngle = Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg;
             targetAngle = Mathf.Clamp(targetAngle, -maxRotation, maxRotation);
-
             currentRotationZ = Mathf.LerpAngle(currentRotationZ, targetAngle, rotationSmoothness * Time.deltaTime);
             transform.rotation = Quaternion.Euler(0f, 0f, currentRotationZ);
         }

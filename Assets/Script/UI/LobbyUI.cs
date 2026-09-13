@@ -42,6 +42,7 @@ public class LobbyUI : MonoBehaviour
     [SerializeField] private JustAButton menuButtonAnimator;
 
     private const string PLAYER_COUNT_MSG = "UpdatePlayerCountMsg";
+    private const string START_GAME_MSG = "StartGameMsg";
 
     private List<Button> activeLobbyButtons = new List<Button>();
     private Dictionary<Transform, Vector3> originalScales = new Dictionary<Transform, Vector3>();
@@ -479,19 +480,37 @@ public class LobbyUI : MonoBehaviour
 
     private void OnStartGameClicked()
     {
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsHost) return;
+
+        // Broadcast Start Game to all clients
+        try
+        {
+            if (NetworkManager.Singleton.CustomMessagingManager != null)
+            {
+                FastBufferWriter writer = new FastBufferWriter(FastBufferWriter.GetWriteSize<FixedString32Bytes>(), Allocator.Temp);
+                using (writer)
+                {
+                    FixedString32Bytes sceneStr = new FixedString32Bytes("Level 1");
+                    writer.WriteValueSafe(sceneStr);
+                    NetworkManager.Singleton.CustomMessagingManager.SendNamedMessageToAll(START_GAME_MSG, writer);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[LobbyUI] Error broadcasting START_GAME_MSG: {ex.Message}");
+        }
+
         if (SceneTransitionManager.Instance != null)
         {
             SceneTransitionManager.Instance.TriggerTransition(() =>
             {
-                if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
-                {
-                    NetworkManager.Singleton.SceneManager.LoadScene("Level 1", UnityEngine.SceneManagement.LoadSceneMode.Single);
-                }
+                SceneTransitionManager.Instance.LoadSceneWithTransition("Level 1");
             });
         }
-        else if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
+        else
         {
-            NetworkManager.Singleton.SceneManager.LoadScene("Level 1", UnityEngine.SceneManagement.LoadSceneMode.Single);
+            UnityEngine.SceneManagement.SceneManager.LoadScene("Level 1");
         }
     }
 
@@ -689,6 +708,7 @@ public class LobbyUI : MonoBehaviour
         if (customMessaging != null)
         {
             customMessaging.RegisterNamedMessageHandler(PLAYER_COUNT_MSG, OnPlayerCountMessageReceived);
+            customMessaging.RegisterNamedMessageHandler(START_GAME_MSG, OnStartGameMessageReceived);
         }
     }
 
@@ -699,6 +719,23 @@ public class LobbyUI : MonoBehaviour
         if (customMessaging != null)
         {
             customMessaging.UnregisterNamedMessageHandler(PLAYER_COUNT_MSG);
+            customMessaging.UnregisterNamedMessageHandler(START_GAME_MSG);
+        }
+    }
+
+    private void OnStartGameMessageReceived(ulong senderClientId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out FixedString32Bytes sceneName);
+        string targetScene = sceneName.ToString();
+        if (string.IsNullOrEmpty(targetScene)) targetScene = "Level 1";
+
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.LoadSceneWithTransition(targetScene);
+        }
+        else
+        {
+            UnityEngine.SceneManagement.SceneManager.LoadScene(targetScene);
         }
     }
 

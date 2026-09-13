@@ -84,6 +84,11 @@ public class DeathMarkerManager : MonoBehaviour
             Quaternion.identity
         );
 
+        if (marker.scene != SceneManager.GetActiveScene())
+        {
+            SceneManager.MoveGameObjectToScene(marker, SceneManager.GetActiveScene());
+        }
+
         // Disable colliders on spawned death marker
         Collider2D[] colliders2D = marker.GetComponentsInChildren<Collider2D>(true);
         foreach (Collider2D collider in colliders2D)

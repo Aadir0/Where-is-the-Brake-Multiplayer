@@ -1,5 +1,4 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody2D))]
@@ -11,7 +10,8 @@ public class SheepController : MonoBehaviour
         Idle,
         Walking,
         Eating,
-        Dead
+        Knocked,
+        Recovering
     }
 
     [Header("State")]
@@ -29,10 +29,11 @@ public class SheepController : MonoBehaviour
     [Range(0f, 1f)]
     [SerializeField] private float eatProbability = 0.45f;
 
-    [Header("Knockback & Death")]
+    [Header("Knockback & Recovery")]
     [SerializeField] private float knockbackForce = 12.0f;
     [SerializeField] private float knockbackTorque = 180.0f;
-    [SerializeField] private float despawnDelay = 1.2f;
+    [SerializeField] private float airborneScaleMultiplier = 0.85f; // 0.15 (15%) size reduction during flight
+    [SerializeField] private float recoveryDuration = 0.5f;
     [SerializeField] private GameObject hitEffectPrefab;
     [SerializeField] private AudioClip hitSound;
 
@@ -40,6 +41,8 @@ public class SheepController : MonoBehaviour
     [SerializeField] private SpriteRenderer spriteRenderer;
     [SerializeField] private Animator animator;
     [SerializeField] private bool flipXFacingLeft = true;
+    [SerializeField] private string sortingLayerName = "Player";
+    [SerializeField] private int sortingOrder = 3;
 
     [Header("Procedural Animation (When No Animator Controller)")]
     [SerializeField] private bool useProceduralAnimation = true;
@@ -52,31 +55,36 @@ public class SheepController : MonoBehaviour
     private Collider2D col;
     private Vector2 originPosition;
     private Vector2 targetPosition;
-    private float stateTimer = 0f;
+    private float stateTimer;
     private Vector3 initialScale;
     private Vector3 initialVisualPos;
-    private bool isDead = false;
+    private Transform visualTransform;
+    private bool isKnocked;
+    private Coroutine recoveryCoroutine;
 
-    // Animator Hashes
     private static readonly int IsWalkingHash = Animator.StringToHash("isWalking");
     private static readonly int IsEatingHash = Animator.StringToHash("isEating");
     private static readonly int IsIdleHash = Animator.StringToHash("isIdle");
-    private static readonly int DieHash = Animator.StringToHash("Die");
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
         col = GetComponent<Collider2D>();
-        if (spriteRenderer == null) spriteRenderer = GetComponent<SpriteRenderer>();
-        if (spriteRenderer == null) spriteRenderer = GetComponentInChildren<SpriteRenderer>();
-        if (animator == null) animator = GetComponent<Animator>();
-        if (animator == null) animator = GetComponentInChildren<Animator>();
+        spriteRenderer ??= GetComponent<SpriteRenderer>() ?? GetComponentInChildren<SpriteRenderer>();
+        animator ??= GetComponent<Animator>() ?? GetComponentInChildren<Animator>();
+        visualTransform = spriteRenderer?.transform;
 
         originPosition = transform.position;
         initialScale = transform.localScale;
+        initialVisualPos = visualTransform != null ? visualTransform.localPosition : Vector3.zero;
+
         if (spriteRenderer != null)
         {
-            initialVisualPos = spriteRenderer.transform.localPosition;
+            if (!string.IsNullOrEmpty(sortingLayerName))
+            {
+                spriteRenderer.sortingLayerName = sortingLayerName;
+            }
+            spriteRenderer.sortingOrder = sortingOrder;
         }
 
         if (rb != null)
@@ -93,7 +101,11 @@ public class SheepController : MonoBehaviour
 
     private void Update()
     {
-        if (isDead) return;
+        if (currentState == SheepState.Knocked || currentState == SheepState.Recovering)
+        {
+            // State transitions handled by coroutines
+            return;
+        }
 
         stateTimer -= Time.deltaTime;
 
@@ -118,7 +130,6 @@ public class SheepController : MonoBehaviour
         currentState = SheepState.Idle;
         stateTimer = Random.Range(minIdleDuration, maxIdleDuration);
         if (rb != null) rb.linearVelocity = Vector2.zero;
-
         UpdateAnimatorParams();
     }
 
@@ -152,7 +163,7 @@ public class SheepController : MonoBehaviour
     private void UpdateWalking()
     {
         Vector2 currentPos = transform.position;
-        Vector2 direction = (targetPosition - currentPos);
+        Vector2 direction = targetPosition - currentPos;
         float distance = direction.magnitude;
 
         if (distance <= 0.15f || stateTimer <= 0f)
@@ -168,9 +179,7 @@ public class SheepController : MonoBehaviour
             return;
         }
 
-        // Update facing direction based on movement delta each frame
         UpdateFacingDirection(direction.x);
-        // Apply movement
         Vector2 moveStep = direction.normalized * (walkSpeed * Time.deltaTime);
         transform.position = currentPos + moveStep;
     }
@@ -180,7 +189,6 @@ public class SheepController : MonoBehaviour
         currentState = SheepState.Eating;
         stateTimer = Random.Range(minEatDuration, maxEatDuration);
         if (rb != null) rb.linearVelocity = Vector2.zero;
-
         UpdateAnimatorParams();
     }
 
@@ -194,13 +202,10 @@ public class SheepController : MonoBehaviour
 
     private void UpdateFacingDirection(float moveDeltaX)
     {
-        if (Mathf.Abs(moveDeltaX) < 0.01f) return;
+        if (Mathf.Abs(moveDeltaX) < 0.01f || spriteRenderer == null) return;
 
         bool facingLeft = moveDeltaX < 0f;
-        if (spriteRenderer != null)
-        {
-            spriteRenderer.flipX = flipXFacingLeft ? !facingLeft : facingLeft;
-        }
+        spriteRenderer.flipX = flipXFacingLeft ? !facingLeft : facingLeft;
     }
 
     private void UpdateAnimatorParams()
@@ -214,9 +219,8 @@ public class SheepController : MonoBehaviour
 
     private void UpdateProceduralVisuals()
     {
-        if (!useProceduralAnimation || spriteRenderer == null) return;
+        if (!useProceduralAnimation || visualTransform == null) return;
 
-        Transform visualTransform = spriteRenderer.transform;
         if (currentState == SheepState.Walking)
         {
             float bob = Mathf.Sin(Time.time * walkBobSpeed) * walkBobAmount;
@@ -251,7 +255,7 @@ public class SheepController : MonoBehaviour
 
     private void HandleCarImpact(GameObject hitObj, Vector2 relativeVel)
     {
-        if (isDead) return;
+        if (currentState == SheepState.Knocked || currentState == SheepState.Recovering) return;
 
         bool isPlayer = hitObj.CompareTag("Player") ||
                         hitObj.GetComponentInParent<CarControllerSingle>() != null ||
@@ -260,40 +264,41 @@ public class SheepController : MonoBehaviour
 
         if (!isPlayer) return;
 
-        DieFromCarHit(hitObj.transform.position, relativeVel);
+        KnockFromCarHit(hitObj.transform.position, relativeVel);
     }
 
-    public void DieFromCarHit(Vector3 carPosition, Vector2 carVelocity)
+    public void KnockFromCarHit(Vector3 carPosition, Vector2 carVelocity)
     {
-        if (isDead) return;
-        isDead = true;
-        currentState = SheepState.Dead;
+        if (currentState == SheepState.Knocked || currentState == SheepState.Recovering) return;
 
-        if (col != null) col.enabled = false;
+        isKnocked = true;
+        currentState = SheepState.Knocked;
 
-        // Switch to Dynamic physics body for realistic knockback flight
         if (rb != null)
         {
             rb.bodyType = RigidbodyType2D.Dynamic;
-            rb.gravityScale = 1.0f;
-            rb.linearDamping = 0.5f;
+            rb.gravityScale = 1.6f;
+            rb.linearDamping = 0.25f;
+            rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
 
             Vector2 hitDir = (transform.position - carPosition).normalized;
             if (hitDir.sqrMagnitude < 0.01f) hitDir = Vector2.up;
 
-            // Upward arc knockback force
-            Vector2 impulse = (hitDir + Vector2.up * 0.6f).normalized * knockbackForce;
+            Vector2 impulse = (hitDir * 0.7f + Vector2.up * 1.1f).normalized * knockbackForce;
             rb.linearVelocity = impulse;
-            rb.angularVelocity = Random.Range(-knockbackTorque, knockbackTorque);
+            rb.angularVelocity = Random.Range(-240f, 240f);
         }
 
-        // Disable Animator on death so code purely controls the physics knockback, tumble, and fade
         if (animator != null)
         {
             animator.enabled = false;
         }
 
-        // Spawn hit puff / death particles
+        if (col != null)
+        {
+            col.enabled = false;
+        }
+
         Vector3 effectPos = transform.position;
         if (hitEffectPrefab == null)
         {
@@ -307,38 +312,91 @@ public class SheepController : MonoBehaviour
             Destroy(fx, 2.5f);
         }
 
-        // Play Sound
         if (hitSound != null)
         {
             float vol = AudioManager.Instance != null ? AudioManager.Instance.GetSfxVolume() : 1.0f;
             AudioSource.PlayClipAtPoint(hitSound, effectPos, vol);
         }
 
-        StartCoroutine(FadeAndDespawnRoutine());
+        if (recoveryCoroutine != null)
+        {
+            StopCoroutine(recoveryCoroutine);
+        }
+        recoveryCoroutine = StartCoroutine(KnockbackAndRecoveryRoutine());
     }
 
-    private IEnumerator FadeAndDespawnRoutine()
+    private IEnumerator KnockbackAndRecoveryRoutine()
     {
-        float elapsed = 0f;
-        Color initialColor = spriteRenderer != null ? spriteRenderer.color : Color.white;
+        // 1. Airborne flight: smoothly shrink scale while flying
+        float flightDuration = 0.75f;
+        float elapsedFlight = 0f;
+        Vector3 targetShrunkScale = initialScale * airborneScaleMultiplier;
 
-        while (elapsed < despawnDelay)
+        while (elapsedFlight < flightDuration)
         {
-            elapsed += Time.deltaTime;
-            float progress = elapsed / despawnDelay;
-
-            if (spriteRenderer != null)
-            {
-                Color c = initialColor;
-                c.a = Mathf.Lerp(initialColor.a, 0f, progress);
-                spriteRenderer.color = c;
-            }
-
-            transform.localScale = Vector3.Lerp(initialScale, initialScale * 0.2f, progress);
+            elapsedFlight += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsedFlight / flightDuration);
+            transform.localScale = Vector3.Lerp(initialScale, targetShrunkScale, t);
             yield return null;
         }
 
-        Destroy(gameObject);
+        // Wait a short moment for landing physics
+        yield return new WaitForSeconds(0.2f);
+
+        // 2. Settle on ground: stop physics movement
+        if (rb != null)
+        {
+            rb.bodyType = RigidbodyType2D.Kinematic;
+            rb.gravityScale = 0f;
+            rb.linearVelocity = Vector2.zero;
+            rb.angularVelocity = 0f;
+        }
+
+        // 3. Regain original scale and rotate upright
+        float regainDuration = 0.45f;
+        float elapsedRegain = 0f;
+        Vector3 currentScale = transform.localScale;
+        Quaternion currentRot = transform.rotation;
+
+        while (elapsedRegain < regainDuration)
+        {
+            elapsedRegain += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsedRegain / regainDuration);
+            float smoothT = Mathf.SmoothStep(0f, 1f, t);
+
+            transform.localScale = Vector3.Lerp(currentScale, initialScale, smoothT);
+            transform.rotation = Quaternion.Slerp(currentRot, Quaternion.identity, smoothT);
+            yield return null;
+        }
+
+        transform.localScale = initialScale;
+        transform.rotation = Quaternion.identity;
+
+        // 4. Recovering pause: wait for 2 seconds before resuming tasks
+        currentState = SheepState.Recovering;
+        yield return new WaitForSeconds(2.0f);
+
+        // 5. Re-enable collider, animator, and resume normal tasks
+        if (col != null)
+        {
+            col.enabled = true;
+        }
+
+        if (animator != null)
+        {
+            animator.enabled = true;
+        }
+
+        isKnocked = false;
+        EnterIdleState();
+    }
+
+    private void OnDisable()
+    {
+        if (recoveryCoroutine != null)
+        {
+            StopCoroutine(recoveryCoroutine);
+            recoveryCoroutine = null;
+        }
     }
 }
-

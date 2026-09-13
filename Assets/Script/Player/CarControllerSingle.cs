@@ -134,6 +134,8 @@ public class CarControllerSingle : MonoBehaviour
         InitializeTyrePositions();
     }
 
+    private Vector3 defaultBaseScale = Vector3.one;
+
     public void ApplyLevelJumpSettings()
     {
         if (LevelJumpSettings.Instance != null)
@@ -151,8 +153,22 @@ public class CarControllerSingle : MonoBehaviour
                 turnSpeed = LevelJumpSettings.Instance.LevelTurnSpeed;
                 if (!isBoosted) currentSpeed = speed;
             }
+
+            if (LevelJumpSettings.Instance.EnableScaleOverride)
+            {
+                originalCarScale = LevelJumpSettings.Instance.LevelVehicleScale;
+                transform.localScale = LevelJumpSettings.Instance.LevelVehicleScale;
+            }
+            else
+            {
+                originalCarScale = defaultBaseScale;
+                transform.localScale = defaultBaseScale;
+            }
             return;
         }
+
+        originalCarScale = defaultBaseScale;
+        transform.localScale = defaultBaseScale;
 
         string currentScene = SceneManager.GetActiveScene().name;
         if (sceneJumpOverrides != null && sceneJumpOverrides.Count > 0)
@@ -423,48 +439,138 @@ public class CarControllerSingle : MonoBehaviour
                string.Equals(LayerMask.LayerToName(collision.gameObject.layer), "Boundary", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void OnTriggerEnter2D(Collider2D other)
+    public bool IsTrapObject(GameObject obj)
     {
-        if (isDead) return;
+        if (obj == null) return false;
 
-        // Check for Trap: tag on self, parent, root, or name
-        bool isTrap = other.CompareTag("Trap");
-        if (!isTrap && other.transform.parent != null) isTrap = other.transform.parent.CompareTag("Trap");
-        if (!isTrap && other.transform.root != null) isTrap = other.transform.root.CompareTag("Trap");
-        if (!isTrap)
+        Transform current = obj.transform;
+        while (current != null)
         {
-            string n = other.name.ToLower();
-            isTrap = n.Contains("trap") || n.Contains("saw") || n.Contains("spike");
-        }
-        if (!isTrap)
-        {
-            string layerName = LayerMask.LayerToName(other.gameObject.layer);
-            isTrap = !string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase);
+            GameObject candidate = current.gameObject;
+            if (candidate.CompareTag("Trap")) return true;
+            string layerName = LayerMask.LayerToName(candidate.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase)) return true;
+            string n = candidate.name.ToLower();
+            if (n.Contains("trap") || n.Contains("saw") || n.Contains("spike") || n.Contains("blade") || n.Contains("hazard")) return true;
+            current = current.parent;
         }
 
-        // Check for Hole: tag on self, parent, root, or name
-        bool isHole = other.CompareTag("Hole");
-        if (!isHole && other.transform.parent != null) isHole = other.transform.parent.CompareTag("Hole");
-        if (!isHole && other.transform.root != null) isHole = other.transform.root.CompareTag("Hole");
-        if (!isHole)
+        for (int i = 0; i < obj.transform.childCount; i++)
         {
-            string n = other.name.ToLower();
-            isHole = n.Contains("hole") || n.Contains("water") || n.Contains("lava") || n.Contains("pit");
+            Transform child = obj.transform.GetChild(i);
+            if (child.CompareTag("Trap")) return true;
+            string layerName = LayerMask.LayerToName(child.gameObject.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Trap", StringComparison.OrdinalIgnoreCase)) return true;
+            string n = child.name.ToLower();
+            if (n.Contains("trap") || n.Contains("saw") || n.Contains("spike") || n.Contains("blade") || n.Contains("hazard")) return true;
         }
-        if (!isHole)
+
+        if (obj.TryGetComponent<Rigidbody2D>(out var rbComp) && rbComp.gameObject != obj)
         {
-            string layerName = LayerMask.LayerToName(other.gameObject.layer);
-            isHole = !string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase);
+            return IsTrapObject(rbComp.gameObject);
         }
+
+        return false;
+    }
+
+    public bool IsHoleObject(GameObject obj)
+    {
+        if (obj == null) return false;
+
+        Transform current = obj.transform;
+        while (current != null)
+        {
+            GameObject candidate = current.gameObject;
+            if (candidate.CompareTag("Hole")) return true;
+            string layerName = LayerMask.LayerToName(candidate.layer);
+            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase)) return true;
+            string n = candidate.name.ToLower();
+            if (n.Contains("hole") || n.Contains("water") || n.Contains("lava") || n.Contains("pit")) return true;
+            current = current.parent;
+        }
+
+        if (obj.TryGetComponent<Rigidbody2D>(out var rbComp) && rbComp.gameObject != obj)
+        {
+            return IsHoleObject(rbComp.gameObject);
+        }
+
+        return false;
+    }
+
+    private bool CheckAnyOverlappingTrap()
+    {
+        if (boxCollider != null)
+        {
+            List<Collider2D> colHits = new List<Collider2D>();
+            ContactFilter2D filter = new ContactFilter2D { useTriggers = true, useLayerMask = false };
+            int count = boxCollider.Overlap(filter, colHits);
+            for (int i = 0; i < count; i++)
+            {
+                if (colHits[i] != null && colHits[i].gameObject != gameObject && IsTrapObject(colHits[i].gameObject))
+                {
+                    return true;
+                }
+            }
+        }
+
+        Vector2 pos = transform.position;
+        Collider2D[] pointHits = Physics2D.OverlapPointAll(pos);
+        if (pointHits != null)
+        {
+            foreach (var hit in pointHits)
+            {
+                if (hit != null && hit.gameObject != gameObject && IsTrapObject(hit.gameObject)) return true;
+            }
+        }
+
+        Collider2D[] circleHits = Physics2D.OverlapCircleAll(pos, 0.8f);
+        if (circleHits != null)
+        {
+            foreach (var hit in circleHits)
+            {
+                if (hit != null && hit.gameObject != gameObject && IsTrapObject(hit.gameObject)) return true;
+            }
+        }
+
+        if (boxCollider != null)
+        {
+            Collider2D[] boxHits = Physics2D.OverlapBoxAll(boxCollider.bounds.center, boxCollider.bounds.size * 1.3f, transform.eulerAngles.z);
+            if (boxHits != null)
+            {
+                foreach (var hit in boxHits)
+                {
+                    if (hit != null && hit.gameObject != gameObject && IsTrapObject(hit.gameObject)) return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private void CheckTriggerOrCollisionDeath(GameObject otherObj)
+    {
+        if (isDead || isJumping) return;
+
+        bool isTrap = IsTrapObject(otherObj) || CheckAnyOverlappingTrap();
+        bool isHole = IsHoleObject(otherObj);
 
         if (isTrap || isHole)
         {
-            Debug.Log($"[CarControllerSingle] DEATH TRIGGER: obj='{other.gameObject.name}', " +
-                      $"tag='{other.gameObject.tag}', " +
-                      $"layer='{LayerMask.LayerToName(other.gameObject.layer)}', " +
+            Debug.Log($"[CarControllerSingle] DEATH CONTACT: obj='{(otherObj != null ? otherObj.name : "null")}', " +
+                      $"tag='{(otherObj != null ? otherObj.tag : "null")}', " +
                       $"isTrap={isTrap}, isHole={isHole} => Using {(isTrap ? "TRAP" : "HOLE")} death effect");
             StartCoroutine(Die(isTrap));
         }
+    }
+
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        CheckTriggerOrCollisionDeath(other?.gameObject);
+    }
+
+    private void OnTriggerStay2D(Collider2D other)
+    {
+        CheckTriggerOrCollisionDeath(other?.gameObject);
     }
 
     private void OnCollisionEnter2D(Collision2D collision)
@@ -474,6 +580,7 @@ public class CarControllerSingle : MonoBehaviour
             isTouchingBoundary = true;
             ApplyBoundaryDrift();
         }
+        CheckTriggerOrCollisionDeath(collision.gameObject);
     }
 
     private void OnCollisionStay2D(Collision2D collision)
@@ -483,6 +590,7 @@ public class CarControllerSingle : MonoBehaviour
             isTouchingBoundary = true;
             ApplyBoundaryDrift();
         }
+        CheckTriggerOrCollisionDeath(collision.gameObject);
     }
 
     private void OnCollisionExit2D(Collision2D collision)
@@ -747,11 +855,35 @@ public class CarControllerSingle : MonoBehaviour
         if (effectToSpawn != null)
         {
             GameObject fx = Instantiate(effectToSpawn, transform.position, Quaternion.identity);
+            SpriteRenderer sr = fx.GetComponent<SpriteRenderer>() ?? fx.GetComponentInChildren<SpriteRenderer>();
+            if (sr != null)
+            {
+                sr.sortingLayerName = "Player";
+                sr.sortingOrder = 50;
+            }
+            Renderer[] rends = fx.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in rends)
+            {
+                if (r != null)
+                {
+                    r.sortingLayerName = "Player";
+                    r.sortingOrder = 50;
+                }
+            }
             StartCoroutine(AutoCleanEffectRoutine(fx));
         }
         else if (smokeEffect != null)
         {
             GameObject fx = Instantiate(smokeEffect, transform.position, Quaternion.identity);
+            Renderer[] rends = fx.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in rends)
+            {
+                if (r != null)
+                {
+                    r.sortingLayerName = "Player";
+                    r.sortingOrder = 50;
+                }
+            }
             StartCoroutine(AutoCleanEffectRoutine(fx));
         }
 

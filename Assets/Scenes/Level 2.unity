@@ -7732,7 +7732,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.29473138
+      m_AnimationSpeed: 0.23144425
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -11, y: -6, z: 0}
@@ -7742,7 +7742,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.21176083
+      m_AnimationSpeed: 0.21482278
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -10, y: -6, z: 0}
@@ -7752,7 +7752,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.26939446
+      m_AnimationSpeed: 0.22946444
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -9, y: -6, z: 0}
@@ -7762,7 +7762,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.29481846
+      m_AnimationSpeed: 0.2096372
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -8, y: -6, z: 0}
@@ -7772,7 +7772,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.2810754
+      m_AnimationSpeed: 0.2801417
       m_AnimationTimeOffset: 0
       m_Flags: 0
   m_TileAssetArray:
@@ -8014,6 +8014,8 @@ MonoBehaviour:
   enableSpeedOverride: 1
   levelSpeed: 6.5
   levelTurnSpeed: 135
+  enableScaleOverride: 1
+  levelVehicleScale: {x: 4, y: 4, z: 1}
 --- !u!4 &769403610
 Transform:
   m_ObjectHideFlags: 0

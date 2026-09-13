@@ -293,10 +293,11 @@ public class LevelTimer : NetworkBehaviour
             int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
             LeaderboardManager.Instance.RecordLevelCompletion(activeScene, elapsedTime, deaths, isTimeout: true);
             LeaderboardManager.Instance.EnsureAllLevelsRecorded();
+            LeaderboardManager.Instance.DistributeTimeoutLevelTimes();
         }
 
         ShowTimeOverUI();
-        StartCoroutine(DelayedSwitchToEndingRoutine(2.5f));
+        StartCoroutine(DelayedSwitchToEndingRoutine(2f));
     }
 
     private void HandleTimerExpiration()
@@ -313,13 +314,14 @@ public class LevelTimer : NetworkBehaviour
             int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
             LeaderboardManager.Instance.RecordLevelCompletion(activeScene, elapsedTime, deaths, isTimeout: true);
             LeaderboardManager.Instance.EnsureAllLevelsRecorded();
+LeaderboardManager.Instance.DistributeTimeoutLevelTimes();
         }
 
         ShowTimeOverUI();
-        StartCoroutine(DelayedSwitchToEndingRoutine(2.5f));
+        StartCoroutine(DelayedSwitchToEndingRoutine(2f));
     }
 
-    private IEnumerator DelayedSwitchToEndingRoutine(float delay = 2.5f)
+    private IEnumerator DelayedSwitchToEndingRoutine(float delay = 2f)
     {
         yield return new WaitForSeconds(delay);
 
@@ -400,14 +402,12 @@ public class LevelTimer : NetworkBehaviour
                 TextMeshProUGUI[] foundTexts = UnityEngine.Object.FindObjectsByType<TextMeshProUGUI>(FindObjectsInactive.Include, FindObjectsSortMode.None);
                 foreach (var txt in foundTexts)
                 {
-                    if (txt.gameObject.scene.isLoaded)
+                    if (!txt.gameObject.scene.isLoaded) continue;
+                    string txtName = txt.gameObject.name.ToLower();
+                    if (txtName.Contains("timer") || txtName.Contains("time") || txt.CompareTag("Timer"))
                     {
-                        string txtName = txt.gameObject.name.ToLower();
-                        if (txtName.Contains("timer") || txtName.Contains("time") || txt.CompareTag("Timer"))
-                        {
-                            timerText = txt;
-                            break;
-                        }
+                        timerText = txt;
+                        break;
                     }
                 }
 
@@ -415,8 +415,8 @@ public class LevelTimer : NetworkBehaviour
                 {
                     foreach (var txt in foundTexts)
                     {
-                        if (txt.gameObject.scene.isLoaded &&
-                            txt.GetComponentInParent<Canvas>() != null &&
+                        if (!txt.gameObject.scene.isLoaded) continue;
+                        if (txt.GetComponentInParent<Canvas>() != null &&
                             txt.GetComponentInParent<Button>() == null &&
                             !txt.gameObject.name.ToLower().Contains("prompt") &&
                             !txt.gameObject.name.ToLower().Contains("start"))
@@ -433,12 +433,35 @@ public class LevelTimer : NetworkBehaviour
         {
             timeOverPanel = null;
 
-            foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+            Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            foreach (var canvas in canvases)
             {
-                if (go.scene.isLoaded && (go.CompareTag("TimeOver") || go.name.Equals("TimeOverPanel", StringComparison.OrdinalIgnoreCase) || go.name.Contains("TimeOver", StringComparison.OrdinalIgnoreCase)))
+                if (!canvas.gameObject.scene.isLoaded) continue;
+                Transform[] children = canvas.GetComponentsInChildren<Transform>(true);
+                foreach (var child in children)
                 {
-                    timeOverPanel = go;
-                    break;
+                    string n = child.name.ToLower();
+                    if (child.CompareTag("TimeOver") || n.Contains("timeover") || n.Contains("time over") || n.Contains("time_over") || n.Contains("timeout"))
+                    {
+                        timeOverPanel = child.gameObject;
+                        break;
+                    }
+                }
+                if (timeOverPanel != null) break;
+            }
+
+            if (timeOverPanel == null)
+            {
+                Transform[] allTransforms = UnityEngine.Object.FindObjectsByType<Transform>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+                foreach (Transform t in allTransforms)
+                {
+                    if (!t.gameObject.scene.isLoaded) continue;
+                    string n = t.name.ToLower();
+                    if (t.CompareTag("TimeOver") || n.Contains("timeover") || n.Contains("time_over"))
+                    {
+                        timeOverPanel = t.gameObject;
+                        break;
+                    }
                 }
             }
         }
@@ -477,6 +500,7 @@ public class LevelTimer : NetworkBehaviour
         if (timeOverPanel != null)
         {
             timeOverPanel.SetActive(true);
+            timeOverPanel.transform.SetAsLastSibling();
 
             // Populate Time Over UI Text Labels
             TextMeshProUGUI[] tmps = timeOverPanel.GetComponentsInChildren<TextMeshProUGUI>(true);

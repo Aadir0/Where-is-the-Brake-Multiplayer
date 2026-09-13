@@ -195,6 +195,8 @@ public class NetworkCarController : NetworkBehaviour
         InitializeTyrePositions();
     }
 
+    private Vector3 defaultBaseScale = Vector3.one;
+
     public void ApplyLevelJumpSettings()
     {
         if (LevelJumpSettings.Instance != null)
@@ -212,8 +214,22 @@ public class NetworkCarController : NetworkBehaviour
                 turnSpeed = LevelJumpSettings.Instance.LevelTurnSpeed;
                 if (!isBoosted) currentSpeed = speed;
             }
+
+            if (LevelJumpSettings.Instance.EnableScaleOverride)
+            {
+                originalCarScale = LevelJumpSettings.Instance.LevelVehicleScale;
+                transform.localScale = LevelJumpSettings.Instance.LevelVehicleScale;
+            }
+            else
+            {
+                originalCarScale = defaultBaseScale;
+                transform.localScale = defaultBaseScale;
+            }
             return;
         }
+
+        originalCarScale = defaultBaseScale;
+        transform.localScale = defaultBaseScale;
 
         string currentScene = SceneManager.GetActiveScene().name;
         if (sceneJumpOverrides != null && sceneJumpOverrides.Count > 0)
@@ -626,6 +642,12 @@ public class NetworkCarController : NetworkBehaviour
             healthComp.OnRespawn -= ResetCarBoostStateLocal;
         }
 
+        m_ComponentsCached = false;
+        m_CachedRenderers = null;
+        m_CachedParticles = null;
+        m_CachedColliders = null;
+        m_CachedAudioSources = null;
+
         if (IsOwner || IsLocalPlayer)
         {
             DisableInput(MoveInput);
@@ -637,18 +659,21 @@ public class NetworkCarController : NetworkBehaviour
 
     private void OnCurrentSceneChanged(Unity.Collections.FixedString32Bytes previousState, Unity.Collections.FixedString32Bytes newState)
     {
-        UpdateAllCarsSceneVisibility();
+        UpdateVisibilityBasedOnScene();
 
         string sceneStr = newState.ToString();
         if (sceneStr.Equals("Ending", StringComparison.OrdinalIgnoreCase))
         {
-            string localScene = SceneManager.GetActiveScene().name;
-            if (!localScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
-                !localScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
+            if (IsSpawned && !IsOwner && !IsLocalPlayer)
             {
-                if (LevelTimer.Instance != null)
+                string localScene = SceneManager.GetActiveScene().name;
+                if (!localScene.Equals("Ending", StringComparison.OrdinalIgnoreCase) &&
+                    !localScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase))
                 {
-                    LevelTimer.Instance.TriggerTimeOverFromMatchEnd();
+                    if (LevelTimer.Instance != null)
+                    {
+                        LevelTimer.Instance.TriggerTimeOverFromMatchEnd();
+                    }
                 }
             }
         }
@@ -777,7 +802,6 @@ public class NetworkCarController : NetworkBehaviour
     public bool IsInSameSceneAsLocalPlayer()
     {
         if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return true;
-        if (IsOwner || IsLocalPlayer) return true;
 
         string localScene = SceneManager.GetActiveScene().name;
         if (localScene.Equals("MainMenu", StringComparison.OrdinalIgnoreCase) ||
@@ -786,95 +810,111 @@ public class NetworkCarController : NetworkBehaviour
             return false;
         }
 
+        if (IsOwner || IsLocalPlayer) return true;
+
         string carScene = currentSceneNet.Value.ToString();
         if (string.IsNullOrEmpty(carScene))
         {
-            return true;
+            return false;
         }
 
         return string.Equals(carScene, localScene, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static readonly List<NetworkCarController> s_AllCarsCache = new List<NetworkCarController>(8);
+    private Renderer[] m_CachedRenderers;
+    private ParticleSystem[] m_CachedParticles;
+    private Collider2D[] m_CachedColliders;
+    private AudioSource[] m_CachedAudioSources;
+    private bool m_ComponentsCached;
+
     public void UpdateVisibilityBasedOnScene()
+{
+    bool isSameScene = IsInSameSceneAsLocalPlayer();
+
+    if (!m_ComponentsCached)
     {
-        bool isSameScene = IsInSameSceneAsLocalPlayer();
+        CacheComponents();
+    }
 
-        // 1. SpriteRenderer & all other Renderers on car and its children
-        Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
-        foreach (var r in renderers)
+    if (m_CachedRenderers != null)
+    {
+        foreach (var r in m_CachedRenderers)
         {
-            if (r != null)
+            if (r != null) r.enabled = isSameScene;
+        }
+    }
+
+    if (m_CachedParticles != null)
+    {
+        foreach (var p in m_CachedParticles)
+        {
+            if (p != null && !isSameScene)
             {
-                r.enabled = isSameScene;
+                p.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
             }
         }
+    }
 
-        // Stop all particle systems if in different scene
-        ParticleSystem[] particles = GetComponentsInChildren<ParticleSystem>(true);
-        foreach (var p in particles)
+    if (m_CachedColliders != null)
+    {
+        foreach (var c in m_CachedColliders)
         {
-            if (p != null)
-            {
-                if (!isSameScene)
-                {
-                    p.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                }
-            }
+            if (c != null) c.enabled = isSameScene;
         }
+    }
 
-        // 2. Colliders
-        Collider2D[] colliders = GetComponentsInChildren<Collider2D>(true);
-        foreach (var c in colliders)
-        {
-            if (c != null)
-            {
-                c.enabled = isSameScene;
-            }
-        }
-
-        // 3. Audio sources
-        AudioSource[] audios = GetComponentsInChildren<AudioSource>(true);
-        foreach (var a in audios)
+    if (m_CachedAudioSources != null)
+    {
+        foreach (var a in m_CachedAudioSources)
         {
             if (a != null)
             {
                 a.mute = !isSameScene;
-                if (!isSameScene && a.isPlaying)
-                {
-                    a.Stop();
-                }
-            }
-        }
-
-        // 4. Start prompt visual
-        if (startPromptVisual != null)
-        {
-            if (!isSameScene)
-            {
-                startPromptVisual.SetActive(false);
-            }
-            else if (!isBoosted && !hasWonPlayer && (IsOwner || IsLocalPlayer))
-            {
-                startPromptVisual.SetActive(true);
-            }
-            else
-            {
-                startPromptVisual.SetActive(false);
+                if (!isSameScene && a.isPlaying) a.Stop();
             }
         }
     }
 
-    public static void UpdateAllCarsSceneVisibility()
+    if (startPromptVisual != null)
     {
-        NetworkCarController[] allCars = UnityEngine.Object.FindObjectsByType<NetworkCarController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-        foreach (var car in allCars)
+        if (!isSameScene)
         {
-            if (car != null)
-            {
-                car.UpdateVisibilityBasedOnScene();
-            }
+            startPromptVisual.SetActive(false);
+        }
+        else if (!isBoosted && !hasWonPlayer && (IsOwner || IsLocalPlayer))
+        {
+            startPromptVisual.SetActive(true);
+        }
+        else
+        {
+            startPromptVisual.SetActive(false);
         }
     }
+}
+
+private void CacheComponents()
+{
+    m_CachedRenderers = GetComponentsInChildren<Renderer>(true);
+    m_CachedParticles = GetComponentsInChildren<ParticleSystem>(true);
+    m_CachedColliders = GetComponentsInChildren<Collider2D>(true);
+    m_CachedAudioSources = GetComponentsInChildren<AudioSource>(true);
+    m_ComponentsCached = true;
+}
+
+public static void UpdateAllCarsSceneVisibility()
+{
+    s_AllCarsCache.Clear();
+    var cars = UnityEngine.Object.FindObjectsByType<NetworkCarController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+    foreach (var car in cars)
+    {
+        if (car != null)
+        {
+            s_AllCarsCache.Add(car);
+            car.UpdateVisibilityBasedOnScene();
+        }
+    }
+}
 
     public void ResetCarBoostStateLocal()
     {
@@ -888,6 +928,8 @@ public class NetworkCarController : NetworkBehaviour
         isTouchingBoundary = false;
         lastActionFrame = -1;
         ResetSurfaceModifiers();
+
+        m_ComponentsCached = false;
 
         ApplyLevelJumpSettings();
         if (LevelJumpSettings.Instance == null)
@@ -1024,30 +1066,25 @@ public class NetworkCarController : NetworkBehaviour
             return;
         }
 
-        bool inSameScene = IsInSameSceneAsLocalPlayer();
+        bool isSameScene = IsInSameSceneAsLocalPlayer();
+        if (!isSameScene)
+        {
+            if (spriteRenderer != null && spriteRenderer.enabled) spriteRenderer.enabled = false;
+            Renderer[] allR = GetComponentsInChildren<Renderer>(true);
+            foreach (var r in allR) if (r != null && r.enabled) r.enabled = false;
+            Collider2D[] allC = GetComponentsInChildren<Collider2D>(true);
+            foreach (var c in allC) if (c != null && c.enabled) c.enabled = false;
+            if (startPromptVisual != null && startPromptVisual.activeSelf) startPromptVisual.SetActive(false);
+            StopCarAudio();
+            return;
+        }
 
         if (!IsOwner && !IsLocalPlayer)
         {
-            if (!inSameScene)
+            if (healthComp != null && !healthComp.isDead.Value)
             {
-                if (spriteRenderer != null && spriteRenderer.enabled) spriteRenderer.enabled = false;
-                Renderer[] allR = GetComponentsInChildren<Renderer>(true);
-                foreach (var r in allR) if (r != null && r.enabled) r.enabled = false;
-
-                Collider2D[] allC = GetComponentsInChildren<Collider2D>(true);
-                foreach (var c in allC) if (c != null && c.enabled) c.enabled = false;
-
-                StopCarAudio();
-                if (startPromptVisual != null && startPromptVisual.activeSelf) startPromptVisual.SetActive(false);
-                return;
-            }
-            else
-            {
-                if (healthComp != null && !healthComp.isDead.Value)
-                {
-                    if (spriteRenderer != null && !spriteRenderer.enabled) spriteRenderer.enabled = true;
-                    if (boxCollider != null && !boxCollider.enabled) boxCollider.enabled = true;
-                }
+                if (spriteRenderer != null && !spriteRenderer.enabled) spriteRenderer.enabled = true;
+                if (boxCollider != null && !boxCollider.enabled) boxCollider.enabled = true;
             }
         }
         else
@@ -1076,7 +1113,6 @@ public class NetworkCarController : NetworkBehaviour
 
         if (!IsOwner && !IsLocalPlayer) return;
 
-        // Check Esc / Gamepad Menu Button to return to MainMenu
         bool menuPressed = false;
         if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame)
         {

@@ -210,7 +210,7 @@ public class PlayerSpawner : MonoBehaviour
 
         NotifyPlayerCountToAllClients();
 
-        if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsServer)
+        if (NetworkRaceManager.Instance != null && NetworkRaceManager.Instance.IsServer && activeSceneName.Equals("Level 1", StringComparison.OrdinalIgnoreCase))
         {
             NetworkRaceManager.Instance.StartCountdownServer();
         }
@@ -263,7 +263,11 @@ public class PlayerSpawner : MonoBehaviour
         if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client) &&
             client.PlayerObject != null && client.PlayerObject.IsSpawned)
         {
-            RepositionCar(client.PlayerObject, spawnPos, spawnRot);
+            // Only reposition the server's own car upon server scene change; remote clients reposition their own car locally
+            if (clientId == NetworkManager.ServerClientId)
+            {
+                RepositionCar(client.PlayerObject, spawnPos, spawnRot);
+            }
             spawnedPlayers[clientId] = client.PlayerObject;
             return;
         }
@@ -271,7 +275,10 @@ public class PlayerSpawner : MonoBehaviour
         // Reposition tracked player object
         if (spawnedPlayers.TryGetValue(clientId, out NetworkObject existing) && existing != null && existing.IsSpawned)
         {
-            RepositionCar(existing, spawnPos, spawnRot);
+            if (clientId == NetworkManager.ServerClientId)
+            {
+                RepositionCar(existing, spawnPos, spawnRot);
+            }
             return;
         }
 

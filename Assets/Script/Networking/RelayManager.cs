@@ -504,7 +504,7 @@ public class RelayManager : MonoBehaviour
         networkManager.NetworkConfig.NetworkTransport = transport;
         networkManager.NetworkConfig.ConnectionApproval = false;
         networkManager.NetworkConfig.ClientConnectionBufferTimeout = clientConnectionBufferTimeoutSeconds;
-        networkManager.NetworkConfig.EnableSceneManagement = true;
+        networkManager.NetworkConfig.EnableSceneManagement = false; // Independent per-player level progression
         networkManager.NetworkConfig.ForceSamePrefabs = false;
         networkManager.NetworkConfig.TickRate = 60;
     }

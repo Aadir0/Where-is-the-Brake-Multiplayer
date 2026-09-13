@@ -102,6 +102,13 @@ public class ShadowJump : MonoBehaviour
             return;
         }
 
+        NetworkCarController netCar = target.GetComponent<NetworkCarController>() ?? target.GetComponentInParent<NetworkCarController>();
+        if (netCar != null && !netCar.IsInSameSceneAsLocalPlayer())
+        {
+            DisableShadow();
+            return;
+        }
+
         if (Time.time >= disableTime)
         {
             DisableShadow();
