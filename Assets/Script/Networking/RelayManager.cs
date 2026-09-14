@@ -124,6 +124,22 @@ public class RelayManager : MonoBehaviour
             waitConnectionCoroutine = null;
         }
         OnClientDisconnectedFromHost?.Invoke(msg);
+
+        // If client is in a game level or ending scene, return to MainMenu!
+        string activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        if (!string.Equals(activeScene, "MainMenu", StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.Log($"[RelayManager] Host disconnected. Teleporting client from {activeScene} to MainMenu.");
+            Time.timeScale = 1.0f;
+            if (SceneTransitionManager.Instance != null)
+            {
+                SceneTransitionManager.Instance.LoadSceneWithTransition("MainMenu");
+            }
+            else
+            {
+                UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
+            }
+        }
     }
 
     private void CompleteClientConnection()

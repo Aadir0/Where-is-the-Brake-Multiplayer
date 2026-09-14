@@ -7732,7 +7732,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.23144425
+      m_AnimationSpeed: 0.21486585
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -11, y: -6, z: 0}
@@ -7742,7 +7742,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.21482278
+      m_AnimationSpeed: 0.26587555
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -10, y: -6, z: 0}
@@ -7752,7 +7752,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.22946444
+      m_AnimationSpeed: 0.257538
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -9, y: -6, z: 0}
@@ -7762,7 +7762,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.2096372
+      m_AnimationSpeed: 0.27516693
       m_AnimationTimeOffset: 0
       m_Flags: 0
   - first: {x: -8, y: -6, z: 0}
@@ -7772,7 +7772,7 @@ Tilemap:
       - {fileID: 2003635185, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: 1881145470, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
       - {fileID: -1786118863, guid: 634a7f9de3c397d4ea1f70794b3120b6, type: 3}
-      m_AnimationSpeed: 0.2801417
+      m_AnimationSpeed: 0.22610447
       m_AnimationTimeOffset: 0
       m_Flags: 0
   m_TileAssetArray:
@@ -7929,55 +7929,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a4b8aee739cf5834c809cbf36ac7f6cd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::JumpTrigger
---- !u!1 &729560399
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 729560401}
-  - component: {fileID: 729560400}
-  m_Layer: 0
-  m_Name: FrogSpawner
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &729560400
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 729560399}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2b8e1d495f023559ba573c6e5f223344, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::FrogHoleSpawner
-  frogPrefab: {fileID: 519420029, guid: 5d8a3b1c2e4f5a6b7c8d9e0f1a2b3c4d, type: 3}
-  minSpawnInterval: 1
-  maxSpawnInterval: 2.5
-  autoFindHoles: 1
-  holeColliders: []
---- !u!4 &729560401
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 729560399}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 14.64678, y: 3.0517, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &769403608
 GameObject:
   m_ObjectHideFlags: 0
@@ -14600,7 +14551,6 @@ SceneRoots:
   - {fileID: 913408880}
   - {fileID: 2011100126}
   - {fileID: 769403610}
-  - {fileID: 729560401}
   - {fileID: 84911014}
   - {fileID: 172902479}
   - {fileID: 652531401}

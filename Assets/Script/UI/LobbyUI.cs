@@ -392,6 +392,11 @@ public class LobbyUI : MonoBehaviour
 
     private void OnCreateRoomClicked()
     {
+        if (JustAButton.Instance != null && !PlayerPrefs.HasKey("PlayerName"))
+        {
+            JustAButton.Instance.PromptNameModal(() => { ExecuteCreateRoom(); });
+            return;
+        }
         ExecuteCreateRoom();
     }
 

@@ -9,11 +9,14 @@ using UnityEngine.UI;
 
 public class JustAButton : MonoBehaviour
 {
+    public static JustAButton Instance { get; private set; }
+
     [Header("Buttons")]
     [SerializeField] private List<Button> buttons = new List<Button>();
     [SerializeField] private Button hostGameButton;
     [SerializeField] private Button joinGameButton;
     [SerializeField] private Button optionsButton;
+    [SerializeField] private Button leaderboardButton;
     [SerializeField] private int firstSelectedIndex = 0;
     [SerializeField] private bool wrapSelection = true;
 
@@ -36,18 +39,31 @@ public class JustAButton : MonoBehaviour
     [SerializeField] private Slider musicVolumeSlider;
     [SerializeField] private Slider sfxVolumeSlider;
 
+    [Header("Player Name Modal & Global Leaderboard")]
+    [SerializeField] private GameObject nameInputModal;
+    [SerializeField] private TMPro.TMP_InputField nameInputField;
+    [SerializeField] private Button nameConfirmButton;
+    [SerializeField] private Button nameCancelButton;
+    [SerializeField] private GameObject globalLeaderboardModal;
+    [SerializeField] private TMPro.TextMeshProUGUI globalLeaderboardText;
+    [SerializeField] private Button globalLeaderboardBackButton;
+
     private int selectedIndex = 0;
     private int optionsFocusIndex = 0; // 0 = Music, 1 = SFX, 2 = Back Button
     private float nextMoveTime;
     private float nextOptionsMoveTime;
     private bool isBusy;
     private bool isOptionMenuOpen;
+    private bool isNameModalOpen;
+    private bool isLeaderboardModalOpen;
+    private System.Action pendingNameAction;
 
     private readonly Dictionary<Transform, Vector3> initialButtonScales = new Dictionary<Transform, Vector3>();
     private readonly Dictionary<Transform, Coroutine> activePunchCoroutines = new Dictionary<Transform, Coroutine>();
 
     private void Awake()
     {
+        Instance = this;
         DisableUIControllerSubmit();
         CacheInitialButtonScales();
     }
@@ -176,9 +192,27 @@ public class JustAButton : MonoBehaviour
             return;
         }
 
+        if (isNameModalOpen)
+        {
+            ReadNameModalInput();
+            return;
+        }
+
+        if (isLeaderboardModalOpen)
+        {
+            ReadLeaderboardModalInput();
+            return;
+        }
+
         if (isOptionMenuOpen)
         {
             ReadOptionsInput();
+            return;
+        }
+
+        if (Keyboard.current != null && (Keyboard.current.lKey.wasPressedThisFrame || Keyboard.current.tabKey.wasPressedThisFrame))
+        {
+            OpenGlobalLeaderboard();
             return;
         }
 
@@ -194,26 +228,469 @@ public class JustAButton : MonoBehaviour
     public void HostGame()
     {
         if (hostGameButton != null) AnimateButtonPress(hostGameButton);
-        if (LobbyUI.Instance != null)
+        PromptNameModal(() =>
         {
-            LobbyUI.Instance.CreateRoom();
-        }
+            if (LobbyUI.Instance != null)
+            {
+                LobbyUI.Instance.CreateRoom();
+            }
+        });
     }
 
     public void JoinGame()
     {
         if (joinGameButton != null) AnimateButtonPress(joinGameButton);
-        if (SceneTransitionManager.Instance != null)
+        PromptNameModal(() =>
         {
-            SceneTransitionManager.Instance.TriggerTransition(() =>
+            if (SceneTransitionManager.Instance != null)
             {
-                if (LobbyUI.Instance != null) LobbyUI.Instance.OpenJoinUI();
-            });
-        }
-        else if (LobbyUI.Instance != null)
+                SceneTransitionManager.Instance.TriggerTransition(() =>
+                {
+                    if (LobbyUI.Instance != null) LobbyUI.Instance.OpenJoinUI();
+                });
+            }
+            else if (LobbyUI.Instance != null)
+            {
+                LobbyUI.Instance.OpenJoinUI();
+            }
+        });
+    }
+
+    public void PromptNameModal(System.Action onConfirmed)
+    {
+        pendingNameAction = onConfirmed;
+        isNameModalOpen = true;
+        DisableMainButtons();
+        EnsureNameModalBuilt();
+
+        if (nameInputModal != null)
         {
-            LobbyUI.Instance.OpenJoinUI();
+            nameInputModal.SetActive(true);
         }
+
+        if (nameInputField != null)
+        {
+            nameInputField.text = PlayerPrefs.GetString("PlayerName", "Player");
+            nameInputField.Select();
+            nameInputField.ActivateInputField();
+        }
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(true);
+        }
+        else
+        {
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+        }
+    }
+
+    public void OnNameConfirmClicked()
+    {
+        string name = nameInputField != null ? nameInputField.text.Trim() : "Player";
+        if (string.IsNullOrEmpty(name)) name = "Player";
+        PlayerPrefs.SetString("PlayerName", name);
+        PlayerPrefs.Save();
+
+        CloseNameModal();
+        var act = pendingNameAction;
+        pendingNameAction = null;
+        act?.Invoke();
+    }
+
+    public void OnNameCancelClicked()
+    {
+        CloseNameModal();
+        pendingNameAction = null;
+        EnableMainButtons();
+        SelectButton(selectedIndex);
+    }
+
+    public void CloseNameModal()
+    {
+        isNameModalOpen = false;
+        if (nameInputModal != null)
+        {
+            nameInputModal.SetActive(false);
+        }
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(false);
+        }
+        else
+        {
+            Cursor.visible = false;
+            Cursor.lockState = CursorLockMode.Locked;
+        }
+    }
+
+    private void ReadNameModalInput()
+    {
+        if (Keyboard.current != null)
+        {
+            if (Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.numpadEnterKey.wasPressedThisFrame)
+            {
+                OnNameConfirmClicked();
+                return;
+            }
+            if (Keyboard.current.escapeKey.wasPressedThisFrame)
+            {
+                OnNameCancelClicked();
+                return;
+            }
+        }
+
+        Gamepad gamepad = GetGamepad();
+        if (gamepad != null)
+        {
+            if (gamepad.buttonSouth.wasPressedThisFrame)
+            {
+                OnNameConfirmClicked();
+                return;
+            }
+            if (gamepad.buttonEast.wasPressedThisFrame)
+            {
+                OnNameCancelClicked();
+                return;
+            }
+        }
+    }
+
+    public void OpenGlobalLeaderboard()
+    {
+        if (isBusy || isOptionMenuOpen || isNameModalOpen) return;
+
+        isLeaderboardModalOpen = true;
+        DisableMainButtons();
+        EnsureLeaderboardModalBuilt();
+
+        if (globalLeaderboardModal != null)
+        {
+            globalLeaderboardModal.SetActive(true);
+        }
+
+        PopulateGlobalLeaderboardUI();
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(true);
+        }
+        else
+        {
+            Cursor.visible = true;
+            Cursor.lockState = CursorLockMode.None;
+        }
+
+        if (globalLeaderboardBackButton != null)
+        {
+            if (EventSystem.current != null)
+            {
+                EventSystem.current.SetSelectedGameObject(globalLeaderboardBackButton.gameObject);
+            }
+            globalLeaderboardBackButton.Select();
+        }
+    }
+
+    public void CloseGlobalLeaderboard()
+    {
+        isLeaderboardModalOpen = false;
+        if (globalLeaderboardModal != null)
+        {
+            globalLeaderboardModal.SetActive(false);
+        }
+
+        if (CursorManager.Instance != null)
+        {
+            CursorManager.Instance.SetCursorVisibility(false);
+        }
+        else
+        {
+            Cursor.visible = false;
+            Cursor.lockState = CursorLockMode.Locked;
+        }
+
+        EnableMainButtons();
+        SelectButton(selectedIndex);
+    }
+
+    private void ReadLeaderboardModalInput()
+    {
+        if (Keyboard.current != null)
+        {
+            if (Keyboard.current.escapeKey.wasPressedThisFrame || Keyboard.current.enterKey.wasPressedThisFrame || Keyboard.current.spaceKey.wasPressedThisFrame)
+            {
+                CloseGlobalLeaderboard();
+                return;
+            }
+        }
+
+        Gamepad gamepad = GetGamepad();
+        if (gamepad != null)
+        {
+            if (gamepad.buttonEast.wasPressedThisFrame || gamepad.buttonSouth.wasPressedThisFrame)
+            {
+                CloseGlobalLeaderboard();
+                return;
+            }
+        }
+    }
+
+    private void PopulateGlobalLeaderboardUI()
+    {
+        if (globalLeaderboardText == null) return;
+
+        globalLeaderboardText.alignment = TMPro.TextAlignmentOptions.TopLeft;
+
+        if (LeaderboardManager.Instance == null)
+        {
+            globalLeaderboardText.text = "<color=#6B7C93>Leaderboard unavailable.</color>";
+            return;
+        }
+
+        List<LeaderboardEntry> entries = LeaderboardManager.Instance.GetTopEntries();
+        if (entries == null || entries.Count == 0)
+        {
+            globalLeaderboardText.alignment = TMPro.TextAlignmentOptions.Center;
+            globalLeaderboardText.text = "<size=110%><color=#8E9BAE>NO CLEAN RUNS REGISTERED YET</color></size>\n\n<size=85%><color=#6B7C93>Clear all stages without timing out to qualify for the Global Leaderboard!</color></size>";
+            return;
+        }
+
+        string table = "<size=105%><b><color=#8E9BAE>" +
+                       "<pos=15%>RANK" +
+                       "<pos=27%>DRIVER" +
+                       "<pos=53%>TIME" +
+                       "<pos=66.5%>DEATHS" +
+                       "<pos=79.5%>GRADE" +
+                       "</color></b></size>\n\n";
+
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var e = entries[i];
+            System.TimeSpan tSpan = System.TimeSpan.FromSeconds(e.totalTimeSeconds);
+            string tStr = string.Format("{0:D2}:{1:D2}", tSpan.Minutes, tSpan.Seconds);
+            string rankMedal = i switch
+            {
+                0 => "<color=#FFD700>#1</color>",
+                1 => "<color=#E2E8F0>#2</color>",
+                2 => "<color=#CD7F32>#3</color>",
+                _ => $"<color=#8E9BAE>#{(i + 1)}</color>"
+            };
+            string gradeColor = e.grade switch
+            {
+                "S" => "#FFD700",
+                "A" => "#00FFA3",
+                "B" => "#00D2FF",
+                "C" => "#FF9900",
+                _   => "#FF4D6D"
+            };
+            string deathColor = e.totalDeaths == 0 ? "#00FFA3" : "#FF6B6B";
+            string nameTruncated = (e.playerName.Length > 16) ? e.playerName.Substring(0, 16) : e.playerName;
+
+            string deathsStr = e.totalDeaths.ToString();
+            string deathPos = (deathsStr.Length > 1) ? "<pos=68.6%>" : "<pos=69.3%>";
+
+            table += $"<pos=15%><b>{rankMedal}</b>" +
+                     $"<pos=27%><color=#FFFFFF>{nameTruncated}</color>" +
+                     $"<pos=53%><b><color=#00FFA3>{tStr}</color></b>" +
+                     $"{deathPos}<color={deathColor}>{deathsStr}</color>" +
+                     $"<pos=81.2%><color={gradeColor}>[{e.grade}]</color>\n\n";
+        }
+        globalLeaderboardText.text = table;
+    }
+
+    private void EnsureNameModalBuilt()
+    {
+        if (nameInputModal != null) return;
+
+        Canvas canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
+        if (canvas == null) return;
+
+        GameObject overlay = new GameObject("NameInputModalOverlay", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        overlay.transform.SetParent(canvas.transform, false);
+        RectTransform rt = overlay.GetComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+        Image img = overlay.GetComponent<Image>();
+        img.color = new Color(0f, 0f, 0f, 0.8f);
+
+        GameObject box = new GameObject("Box", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        box.transform.SetParent(overlay.transform, false);
+        RectTransform boxRt = box.GetComponent<RectTransform>();
+        boxRt.sizeDelta = new Vector2(520f, 260f);
+        Image boxImg = box.GetComponent<Image>();
+        boxImg.color = new Color(0.09f, 0.11f, 0.14f, 0.98f);
+
+        // Title
+        GameObject titleObj = new GameObject("Title", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        titleObj.transform.SetParent(box.transform, false);
+        RectTransform titleRt = titleObj.GetComponent<RectTransform>();
+        titleRt.anchoredPosition = new Vector2(0f, 80f);
+        titleRt.sizeDelta = new Vector2(480f, 40f);
+        TMPro.TextMeshProUGUI titleTmp = titleObj.GetComponent<TMPro.TextMeshProUGUI>();
+        titleTmp.text = "<b><color=#00FFA3>ENTER YOUR</color> <color=#FFFFFF>NAME</color></b>";
+        titleTmp.fontSize = 24;
+        titleTmp.alignment = TMPro.TextAlignmentOptions.Center;
+
+        // Subtitle
+        GameObject subObj = new GameObject("Subtitle", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        subObj.transform.SetParent(box.transform, false);
+        RectTransform subRt = subObj.GetComponent<RectTransform>();
+        subRt.anchoredPosition = new Vector2(0f, 48f);
+        subRt.sizeDelta = new Vector2(480f, 30f);
+        TMPro.TextMeshProUGUI subTmp = subObj.GetComponent<TMPro.TextMeshProUGUI>();
+        subTmp.text = "<color=#8E9BAE>Name will be recorded on the Global Leaderboard</color>";
+        subTmp.fontSize = 14;
+        subTmp.alignment = TMPro.TextAlignmentOptions.Center;
+
+        // InputField Box
+        GameObject inputObj = new GameObject("InputField", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(TMPro.TMP_InputField));
+        inputObj.transform.SetParent(box.transform, false);
+        RectTransform inputRt = inputObj.GetComponent<RectTransform>();
+        inputRt.anchoredPosition = new Vector2(0f, 0f);
+        inputRt.sizeDelta = new Vector2(360f, 45f);
+        Image inputImg = inputObj.GetComponent<Image>();
+        inputImg.color = new Color(0.05f, 0.07f, 0.09f, 1f);
+        nameInputField = inputObj.GetComponent<TMPro.TMP_InputField>();
+
+        // Text Component
+        GameObject textObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        textObj.transform.SetParent(inputObj.transform, false);
+        RectTransform textRt = textObj.GetComponent<RectTransform>();
+        textRt.anchorMin = Vector2.zero;
+        textRt.anchorMax = Vector2.one;
+        textRt.offsetMin = new Vector2(10f, 0f);
+        textRt.offsetMax = new Vector2(-10f, 0f);
+        TMPro.TextMeshProUGUI tmp = textObj.GetComponent<TMPro.TextMeshProUGUI>();
+        tmp.fontSize = 18;
+        tmp.color = Color.white;
+        tmp.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+        nameInputField.textComponent = tmp;
+
+        // Confirm Button
+        GameObject confirmBtnObj = new GameObject("ConfirmBtn", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        confirmBtnObj.transform.SetParent(box.transform, false);
+        RectTransform confirmRt = confirmBtnObj.GetComponent<RectTransform>();
+        confirmRt.anchoredPosition = new Vector2(-90f, -70f);
+        confirmRt.sizeDelta = new Vector2(150f, 40f);
+        Image confirmImg = confirmBtnObj.GetComponent<Image>();
+        confirmImg.color = new Color(0.14f, 0.52f, 0.21f, 1f);
+        nameConfirmButton = confirmBtnObj.GetComponent<Button>();
+        nameConfirmButton.onClick.AddListener(OnNameConfirmClicked);
+
+        GameObject confirmTextObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        confirmTextObj.transform.SetParent(confirmBtnObj.transform, false);
+        RectTransform ctRt = confirmTextObj.GetComponent<RectTransform>();
+        ctRt.anchorMin = Vector2.zero;
+        ctRt.anchorMax = Vector2.one;
+        ctRt.offsetMin = Vector2.zero;
+        ctRt.offsetMax = Vector2.zero;
+        TMPro.TextMeshProUGUI ctTmp = confirmTextObj.GetComponent<TMPro.TextMeshProUGUI>();
+        ctTmp.text = "<b>CONTINUE</b>";
+        ctTmp.fontSize = 16;
+        ctTmp.alignment = TMPro.TextAlignmentOptions.Center;
+        ctTmp.color = Color.white;
+
+        // Cancel Button
+        GameObject cancelBtnObj = new GameObject("CancelBtn", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        cancelBtnObj.transform.SetParent(box.transform, false);
+        RectTransform cancelRt = cancelBtnObj.GetComponent<RectTransform>();
+        cancelRt.anchoredPosition = new Vector2(90f, -70f);
+        cancelRt.sizeDelta = new Vector2(150f, 40f);
+        Image cancelImg = cancelBtnObj.GetComponent<Image>();
+        cancelImg.color = new Color(0.2f, 0.23f, 0.27f, 1f);
+        nameCancelButton = cancelBtnObj.GetComponent<Button>();
+        nameCancelButton.onClick.AddListener(OnNameCancelClicked);
+
+        GameObject cancelTextObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        cancelTextObj.transform.SetParent(cancelBtnObj.transform, false);
+        RectTransform cancelTRt = cancelTextObj.GetComponent<RectTransform>();
+        cancelTRt.anchorMin = Vector2.zero;
+        cancelTRt.anchorMax = Vector2.one;
+        cancelTRt.offsetMin = Vector2.zero;
+        cancelTRt.offsetMax = Vector2.zero;
+        TMPro.TextMeshProUGUI cancelTmp = cancelTextObj.GetComponent<TMPro.TextMeshProUGUI>();
+        cancelTmp.text = "<b>CANCEL</b>";
+        cancelTmp.fontSize = 16;
+        cancelTmp.alignment = TMPro.TextAlignmentOptions.Center;
+        cancelTmp.color = Color.white;
+
+        nameInputModal = overlay;
+    }
+
+    private void EnsureLeaderboardModalBuilt()
+    {
+        if (globalLeaderboardModal != null) return;
+
+        Canvas canvas = UnityEngine.Object.FindFirstObjectByType<Canvas>();
+        if (canvas == null) return;
+
+        GameObject overlay = new GameObject("GlobalLeaderboardModalOverlay", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        overlay.transform.SetParent(canvas.transform, false);
+        RectTransform rt = overlay.GetComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero;
+        rt.offsetMax = Vector2.zero;
+        Image img = overlay.GetComponent<Image>();
+        img.color = new Color(0f, 0f, 0f, 0.88f);
+
+        GameObject box = new GameObject("Box", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        box.transform.SetParent(overlay.transform, false);
+        RectTransform boxRt = box.GetComponent<RectTransform>();
+        boxRt.sizeDelta = new Vector2(680f, 460f);
+        Image boxImg = box.GetComponent<Image>();
+        boxImg.color = new Color(0.09f, 0.11f, 0.14f, 0.98f);
+
+        // Title
+        GameObject titleObj = new GameObject("Title", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        titleObj.transform.SetParent(box.transform, false);
+        RectTransform titleRt = titleObj.GetComponent<RectTransform>();
+        titleRt.anchoredPosition = new Vector2(0f, 180f);
+        titleRt.sizeDelta = new Vector2(640f, 50f);
+        TMPro.TextMeshProUGUI titleTmp = titleObj.GetComponent<TMPro.TextMeshProUGUI>();
+        titleTmp.text = "<b><color=#00FFA3>GLOBAL</color> <color=#FFFFFF>LEADERBOARD</color></b>\n<size=50%><color=#8E9BAE>TOP DRIVERS (CLEAN RUNS ONLY)</color></size>";
+        titleTmp.fontSize = 24;
+        titleTmp.alignment = TMPro.TextAlignmentOptions.Center;
+
+        // Content
+        GameObject contentObj = new GameObject("Content", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        contentObj.transform.SetParent(box.transform, false);
+        RectTransform contentRt = contentObj.GetComponent<RectTransform>();
+        contentRt.anchoredPosition = new Vector2(0f, 10f);
+        contentRt.sizeDelta = new Vector2(620f, 260f);
+        globalLeaderboardText = contentObj.GetComponent<TMPro.TextMeshProUGUI>();
+        globalLeaderboardText.fontSize = 17;
+        globalLeaderboardText.alignment = TMPro.TextAlignmentOptions.TopLeft;
+
+        // Back Button
+        GameObject backBtnObj = new GameObject("BackBtn", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        backBtnObj.transform.SetParent(box.transform, false);
+        RectTransform backRt = backBtnObj.GetComponent<RectTransform>();
+        backRt.anchoredPosition = new Vector2(0f, -180f);
+        backRt.sizeDelta = new Vector2(200f, 45f);
+        Image backImg = backBtnObj.GetComponent<Image>();
+        backImg.color = new Color(0.18f, 0.22f, 0.28f, 1f);
+        globalLeaderboardBackButton = backBtnObj.GetComponent<Button>();
+        globalLeaderboardBackButton.onClick.AddListener(CloseGlobalLeaderboard);
+
+        GameObject backTextObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TMPro.TextMeshProUGUI));
+        backTextObj.transform.SetParent(backBtnObj.transform, false);
+        RectTransform backTRt = backTextObj.GetComponent<RectTransform>();
+        backTRt.anchorMin = Vector2.zero;
+        backTRt.anchorMax = Vector2.one;
+        backTRt.offsetMin = Vector2.zero;
+        backTRt.offsetMax = Vector2.zero;
+        TMPro.TextMeshProUGUI backTmp = backTextObj.GetComponent<TMPro.TextMeshProUGUI>();
+        backTmp.text = "<b>BACK TO MENU</b>";
+        backTmp.fontSize = 16;
+        backTmp.alignment = TMPro.TextAlignmentOptions.Center;
+        backTmp.color = Color.white;
+
+        globalLeaderboardModal = overlay;
     }
 
     public void Quit()
@@ -234,7 +711,7 @@ public class JustAButton : MonoBehaviour
     public void Options()
     {
         if (optionsButton != null) AnimateButtonPress(optionsButton);
-        if (isBusy || isOptionMenuOpen) return;
+        if (isBusy || isOptionMenuOpen || isNameModalOpen || isLeaderboardModalOpen) return;
 
         if (SceneTransitionManager.Instance != null)
         {
@@ -697,6 +1174,12 @@ public class JustAButton : MonoBehaviour
         if (selectedButton == joinGameButton)
         {
             JoinGame();
+            return;
+        }
+
+        if (selectedButton == leaderboardButton)
+        {
+            OpenGlobalLeaderboard();
             return;
         }
 

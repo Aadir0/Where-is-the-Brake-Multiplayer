@@ -58,7 +58,8 @@ public class LeaderboardUI : MonoBehaviour
         if (LeaderboardManager.Instance != null)
         {
             LeaderboardManager.Instance.EnsureAllLevelsRecorded();
-            LeaderboardManager.Instance.SaveCurrentRun("Player 1");
+            string savedName = PlayerPrefs.GetString("PlayerName", "Player");
+            LeaderboardManager.Instance.SaveCurrentRun(savedName);
         }
 
         ulong localClientId = (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening) ? NetworkManager.Singleton.LocalClientId : 0;
@@ -126,7 +127,7 @@ public class LeaderboardUI : MonoBehaviour
         }
         if (currentSummaryText != null) currentSummaryText.gameObject.SetActive(true);
         if (levelBreakdownText != null) levelBreakdownText.gameObject.SetActive(true);
-        if (topScoresText != null) topScoresText.gameObject.SetActive(true);
+        if (topScoresText != null) topScoresText.gameObject.SetActive(false); // Hide Top Records from ending screen
 
         // Fallback for button references
         if (quitButton == null)
@@ -422,7 +423,11 @@ public class LeaderboardUI : MonoBehaviour
 
         if (currentSummaryText != null)
         {
-            currentSummaryText.text = $"<color=#8E9BAE>TOTAL TIME</color>  <b><color=#FFFFFF>{formattedTotalTime}</color></b>      <color=#415064>|</color>      <color=#8E9BAE>TOTAL DEATHS</color>  <b><color=#FFFFFF>{totalDeaths}</color></b>";
+            string timeDisplayStr = (totalTimeouts > 0)
+                ? $"<color=#FFFFFF>{formattedTotalTime} (TIMED OUT)</color>"
+                : $"<color=#FFFFFF>{formattedTotalTime}</color>";
+
+            currentSummaryText.text = $"<color=#8E9BAE>TOTAL TIME</color>  <b>{timeDisplayStr}</b>      <color=#415064>|</color>      <color=#8E9BAE>TOTAL DEATHS</color>  <b><color=#FFFFFF>{totalDeaths}</color></b>";
         }
 
         if (levelBreakdownText != null)
@@ -441,9 +446,9 @@ public class LeaderboardUI : MonoBehaviour
                         : "<color=#00FFA3>CLEARED</color>";
 
                     string displayName = !string.IsNullOrEmpty(st.levelName) ? st.levelName.ToUpper() : $"LEVEL {i + 1}";
-                    string deathStr = st.deaths == 0 ? "<color=#00FFA3>0</color>" : $"<color=#FF6B6B>{st.deaths}</color>";
+                    string deathStr = (st.deaths == 0 || st.isTimeout) ? "<color=#00FFA3>0</color>" : $"<color=#FF6B6B>{st.deaths}</color>";
 
-                    breakdown += $"<b><color=#FFFFFF>{displayName,-9}</color></b>  <color=#CBD5E1>{tStr}</color>   <color=#8E9BAE>DEATHS:</color> {deathStr,-4}  [{statusTag}]\n";
+                    breakdown += $"<pos=0%><b><color=#FFFFFF>{displayName}</color></b><pos=26%><color=#CBD5E1>{tStr}</color><pos=50%><color=#8E9BAE>DEATHS:</color> {deathStr}<pos=76%>[{statusTag}]\n";
                 }
             }
             else
@@ -455,44 +460,7 @@ public class LeaderboardUI : MonoBehaviour
 
         if (topScoresText != null)
         {
-            string topText = "<b><color=#8E9BAE>TOP RECORDS</color></b>\n\n";
-            List<LeaderboardEntry> entries = LeaderboardManager.Instance.GetTopEntries();
-            if (entries != null && entries.Count > 0)
-            {
-                int displayCount = Mathf.Min(5, entries.Count);
-                for (int i = 0; i < displayCount; i++)
-                {
-                    var entry = entries[i];
-                    TimeSpan eSpan = TimeSpan.FromSeconds(entry.totalTimeSeconds);
-                    string eTimeStr = string.Format("{0:D2}:{1:D2}", eSpan.Minutes, eSpan.Seconds);
-
-                    string medal = i switch
-                    {
-                        0 => "<color=#FFD700>1ST</color>",
-                        1 => "<color=#E2E8F0>2ND</color>",
-                        2 => "<color=#CD7F32>3RD</color>",
-                        _ => $"<color=#8E9BAE>{(i + 1)}TH</color>"
-                    };
-
-                    string gradeColor = entry.grade switch
-                    {
-                        "S" => "#FFD700",
-                        "A" => "#00FFA3",
-                        "B" => "#00D2FF",
-                        "C" => "#FF9900",
-                        _   => "#FF4D6D"
-                    };
-
-                    string deathsColor = entry.totalDeaths == 0 ? "#00FFA3" : "#FF6B6B";
-
-                    topText += $"{medal}  <color={gradeColor}>[{entry.grade}]</color>  <b><color=#FFFFFF>{eTimeStr}</color></b>   <color=#8E9BAE>DEATHS:</color> <color={deathsColor}>{entry.totalDeaths}</color>\n";
-                }
-            }
-            else
-            {
-                topText += "<color=#6B7C93>No records registered.</color>\n";
-            }
-            topScoresText.text = topText;
+            topScoresText.gameObject.SetActive(false);
         }
     }
 
@@ -515,8 +483,15 @@ public class LeaderboardUI : MonoBehaviour
 #endif
     }
 
+    private bool isReturningToMenu = false;
+
     public void OnMainMenuClicked()
     {
+        if (isReturningToMenu) return;
+        isReturningToMenu = true;
+
+        Time.timeScale = 1f;
+
         if (LeaderboardManager.Instance != null)
         {
             LeaderboardManager.Instance.ResetRun();
@@ -526,14 +501,28 @@ public class LeaderboardUI : MonoBehaviour
             LevelTimer.Instance.ResetRunTimer();
         }
 
-        if (RelayManager.Instance != null)
+        try
         {
-            RelayManager.Instance.ShutdownSession();
+            if (RelayManager.Instance != null)
+            {
+                RelayManager.Instance.ShutdownSession();
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[LeaderboardUI] Relay shutdown: {ex.Message}");
         }
 
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        try
         {
-            NetworkManager.Singleton.Shutdown();
+            if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[LeaderboardUI] NetworkManager shutdown: {ex.Message}");
         }
 
         if (SceneTransitionManager.Instance != null)

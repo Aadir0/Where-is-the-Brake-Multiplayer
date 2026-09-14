@@ -44,7 +44,7 @@ public class LevelTimer : NetworkBehaviour
 
     private bool IsNetworkActive => NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening && IsSpawned;
     private bool IsServerOrOffline => !IsNetworkActive || (IsNetworkActive && IsServer);
-    public bool IsTimeOver => IsNetworkActive ? isTimeOver.Value : offlineIsTimeOver;
+    public bool IsTimeOver => (IsNetworkActive && isTimeOver.Value) || offlineIsTimeOver;
 
     private void Awake()
     {
@@ -55,7 +55,8 @@ public class LevelTimer : NetworkBehaviour
         // instance instead would leave a dead, un-networked timer as Instance and break timer sync.
         if (Instance != null && Instance != this)
         {
-            Destroy(Instance.gameObject);
+            Destroy(gameObject);
+            return;
         }
 
         Instance = this;
@@ -289,11 +290,8 @@ public class LevelTimer : NetworkBehaviour
 
         if (LeaderboardManager.Instance != null)
         {
-            float elapsedTime = GetCurrentLevelElapsedTime();
-            int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
-            LeaderboardManager.Instance.RecordLevelCompletion(activeScene, elapsedTime, deaths, isTimeout: true);
+            LeaderboardManager.Instance.RecordLevelCompletion(activeScene, 0f, 0, isTimeout: true);
             LeaderboardManager.Instance.EnsureAllLevelsRecorded();
-            LeaderboardManager.Instance.DistributeTimeoutLevelTimes();
         }
 
         ShowTimeOverUI();
@@ -310,11 +308,8 @@ public class LevelTimer : NetworkBehaviour
 
         if (LeaderboardManager.Instance != null)
         {
-            float elapsedTime = GetCurrentLevelElapsedTime();
-            int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
-            LeaderboardManager.Instance.RecordLevelCompletion(activeScene, elapsedTime, deaths, isTimeout: true);
+            LeaderboardManager.Instance.RecordLevelCompletion(activeScene, 0f, 0, isTimeout: true);
             LeaderboardManager.Instance.EnsureAllLevelsRecorded();
-LeaderboardManager.Instance.DistributeTimeoutLevelTimes();
         }
 
         ShowTimeOverUI();

@@ -851,12 +851,35 @@ public class SheepController : MonoBehaviour
     {
         if (currentState == SheepState.Knocked || currentState == SheepState.Recovering) return;
 
-        bool isPlayer = hitObj.CompareTag("Player") ||
-                        hitObj.GetComponentInParent<CarControllerSingle>() != null ||
-                        hitObj.GetComponentInParent<NetworkCarController>() != null ||
-                        hitObj.GetComponentInParent<CarHealth>() != null;
+        NetworkCarController netCar = hitObj.GetComponentInParent<NetworkCarController>();
+        CarControllerSingle singleCar = hitObj.GetComponentInParent<CarControllerSingle>();
 
+        if (netCar == null && singleCar == null)
+        {
+            CarHealth health = hitObj.GetComponentInParent<CarHealth>();
+            if (health != null)
+            {
+                netCar = health.GetComponent<NetworkCarController>();
+                singleCar = health.GetComponent<CarControllerSingle>();
+            }
+        }
+
+        bool isPlayer = hitObj.CompareTag("Player") || netCar != null || singleCar != null;
         if (!isPlayer) return;
+
+        if (singleCar != null)
+        {
+            singleCar.ApplySheepSlowDebuff(1.0f, 0.45f);
+        }
+
+        if (netCar != null)
+        {
+            if (netCar.IsOwner)
+            {
+                netCar.ApplySheepSlowDebuff(1.0f, 0.45f);
+                netCar.SyncSheepKnockedRpc(gameObject.name, transform.position, hitObj.transform.position, relativeVel);
+            }
+        }
 
         KnockFromCarHit(hitObj.transform.position, relativeVel);
     }

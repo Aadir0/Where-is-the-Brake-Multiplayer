@@ -42,6 +42,7 @@ public class CarHealth : NetworkBehaviour
     private NetworkCarController carController;
     private Coroutine enableRestartCoroutine;
     private Coroutine hitStopCoroutine;
+    private Coroutine delayedDeadUICoroutine;
     private bool isOverlappingHole = false;
     private bool localDeathRequested = false;
     private bool deathResponseApplied = false;
@@ -125,6 +126,7 @@ public class CarHealth : NetworkBehaviour
 
     private void OnSceneLoadedHealth(UnityEngine.SceneManagement.Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
     {
+        localLevelDeaths = 0;
         if (IsServer)
         {
             deathCount.Value = 0;
@@ -294,19 +296,46 @@ public class CarHealth : NetworkBehaviour
         return false;
     }
 
+    private int localLevelDeaths = 0;
+    public int LocalLevelDeaths => localLevelDeaths;
+
     public bool IsHoleObject(GameObject obj)
     {
         if (obj == null) return false;
+
+        // Explicitly exclude non-hazardous visual backgrounds
+        string objName = obj.name.ToLower();
+        if (objName.Contains("background") || objName.Contains("waterbackground"))
+        {
+            return false;
+        }
 
         Transform current = obj.transform;
         while (current != null)
         {
             GameObject candidate = current.gameObject;
+            string cName = candidate.name.ToLower();
+            if (cName.Contains("background") || cName.Contains("waterbackground"))
+            {
+                return false;
+            }
+
             if (candidate.CompareTag("Hole")) return true;
             string layerName = LayerMask.LayerToName(candidate.layer);
-            if (!string.IsNullOrEmpty(layerName) && string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase)) return true;
-            string n = candidate.name.ToLower();
-            if (n.Contains("hole") || n.Contains("water") || n.Contains("lava") || n.Contains("pit")) return true;
+            if (!string.IsNullOrEmpty(layerName) && (string.Equals(layerName, "Hole", StringComparison.OrdinalIgnoreCase) || string.Equals(layerName, "Water", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            // Only consider name matching if the candidate has an active Collider2D or is on a hazard layer
+            if (cName == "hole" || cName == "holes" || cName == "water" || cName.StartsWith("hole") || cName.StartsWith("water"))
+            {
+                if (candidate.GetComponent<Collider2D>() != null || candidate.layer == LayerMask.NameToLayer("Hole") || candidate.layer == LayerMask.NameToLayer("Water"))
+                {
+                    return true;
+                }
+            }
+
             current = current.parent;
         }
 
@@ -689,12 +718,25 @@ public class CarHealth : NetworkBehaviour
 
         if (IsOwner)
         {
+            localLevelDeaths++;
             if (hitStopCoroutine != null) StopCoroutine(hitStopCoroutine);
             hitStopCoroutine = StartCoroutine(HitStopRoutine(hitStopDuration, hitStopTimeScale));
         }
 
         HandleDeathVisuals();
+
+        if (IsOwner)
+        {
+            if (delayedDeadUICoroutine != null) StopCoroutine(delayedDeadUICoroutine);
+            delayedDeadUICoroutine = StartCoroutine(DelayedShowDeadUIRoutine(0.45f));
+        }
+    }
+
+    private IEnumerator DelayedShowDeadUIRoutine(float delay)
+    {
+        yield return new WaitForSecondsRealtime(delay);
         ShowDeadUI();
+        delayedDeadUICoroutine = null;
     }
 
     private IEnumerator HitStopRoutine(float duration, float slowScale)
@@ -835,18 +877,29 @@ public class CarHealth : NetworkBehaviour
 
             isRestartInteractable = true;
 
-            Button btn = deadPanel.GetComponentInChildren<Button>(true);
-            if (btn != null)
+            Button[] buttons = deadPanel.GetComponentsInChildren<Button>(true);
+            foreach (var btn in buttons)
             {
+                if (btn == null) continue;
                 btn.interactable = true;
-                btn.onClick.RemoveAllListeners();
-                btn.onClick.AddListener(OnRestartButtonClicked);
-
-                if (EventSystem.current != null)
+                string btnName = btn.gameObject.name.ToLower();
+                if (btnName.Contains("menu") || btnName.Contains("main") || btnName.Contains("exit") || btnName.Contains("quit"))
                 {
-                    EventSystem.current.SetSelectedGameObject(btn.gameObject);
-                    btn.Select();
+                    btn.onClick.RemoveAllListeners();
+                    btn.onClick.AddListener(OnMainMenuButtonClicked);
                 }
+                else
+                {
+                    btn.onClick.RemoveAllListeners();
+                    btn.onClick.AddListener(OnRestartButtonClicked);
+                }
+            }
+
+            Button firstBtn = deadPanel.GetComponentInChildren<Button>(true);
+            if (firstBtn != null && EventSystem.current != null)
+            {
+                EventSystem.current.SetSelectedGameObject(firstBtn.gameObject);
+                firstBtn.Select();
             }
         }
     }
@@ -856,6 +909,12 @@ public class CarHealth : NetworkBehaviour
         if (!IsOwner) return;
 
         isRestartInteractable = false;
+
+        if (delayedDeadUICoroutine != null)
+        {
+            StopCoroutine(delayedDeadUICoroutine);
+            delayedDeadUICoroutine = null;
+        }
 
         if (hitStopCoroutine != null)
         {
@@ -874,6 +933,29 @@ public class CarHealth : NetworkBehaviour
         if (deadPanel != null)
         {
             deadPanel.SetActive(false);
+        }
+    }
+
+    public void OnMainMenuButtonClicked()
+    {
+        Time.timeScale = 1.0f;
+        if (RelayManager.Instance != null)
+        {
+            RelayManager.Instance.ShutdownSession();
+        }
+
+        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
+        {
+            NetworkManager.Singleton.Shutdown();
+        }
+
+        if (SceneTransitionManager.Instance != null)
+        {
+            SceneTransitionManager.Instance.LoadSceneWithTransition("MainMenu");
+        }
+        else
+        {
+            UnityEngine.SceneManagement.SceneManager.LoadScene("MainMenu");
         }
     }
 

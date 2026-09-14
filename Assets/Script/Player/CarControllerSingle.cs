@@ -44,6 +44,27 @@ public class CarControllerSingle : MonoBehaviour
     private float boundaryDriftTimer;
     private bool isTouchingBoundary = false;
 
+    [Header("Sheep Collision Debuff")]
+    private float sheepDebuffMultiplier = 1.0f;
+    private Coroutine sheepDebuffCoroutine;
+
+    public void ApplySheepSlowDebuff(float duration = 1.0f, float speedMultiplier = 0.45f)
+    {
+        if (sheepDebuffCoroutine != null)
+        {
+            StopCoroutine(sheepDebuffCoroutine);
+        }
+        sheepDebuffCoroutine = StartCoroutine(SheepSlowDebuffRoutine(duration, speedMultiplier));
+    }
+
+    private IEnumerator SheepSlowDebuffRoutine(float duration, float speedMultiplier)
+    {
+        sheepDebuffMultiplier = speedMultiplier;
+        yield return new WaitForSeconds(duration);
+        sheepDebuffMultiplier = 1.0f;
+        sheepDebuffCoroutine = null;
+    }
+
     [Header("Jump Effect Settings")]
     [SerializeField] private InputActionReference JumpAction;
     [SerializeField] private float jumpDuration = 0.32f;
@@ -423,7 +444,8 @@ public class CarControllerSingle : MonoBehaviour
 
         float rotationRadians = targetRotation * Mathf.Deg2Rad;
         Vector2 forwardDirection = new Vector2(Mathf.Cos(rotationRadians), Mathf.Sin(rotationRadians));
-        Vector2 desiredVelocity = forwardDirection * currentSpeed;
+        float effectiveSpeed = currentSpeed * sheepDebuffMultiplier;
+        Vector2 desiredVelocity = forwardDirection * effectiveSpeed;
 
         float driftFactorBlend = Mathf.Lerp(driftFactor, driftIntensity, turnMagnitude);
         float lerpRate = Mathf.Lerp(18f, 26f, driftFactorBlend);

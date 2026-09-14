@@ -82,6 +82,7 @@ public class LeaderboardManager : MonoBehaviour
         _instance = this;
         DontDestroyOnLoad(gameObject);
 
+        CheckAndPerformInitialReset();
         LoadLeaderboardFromPrefs();
     }
 
@@ -96,11 +97,17 @@ public class LeaderboardManager : MonoBehaviour
 
     public void RecordLevelCompletion(string levelName, float timeSeconds, int deaths, bool isTimeout = false)
     {
+        if (isTimeout)
+        {
+            timeSeconds = 0f;
+            deaths = 0;
+        }
+
         LevelStatEntry existing = levelStats.Find(x => string.Equals(x.levelName, levelName, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
         {
-            existing.timeSeconds = timeSeconds;
-            existing.deaths = deaths;
+            existing.timeSeconds = isTimeout ? 0f : timeSeconds;
+            existing.deaths = isTimeout ? 0 : deaths;
             existing.isTimeout = isTimeout;
         }
         else
@@ -108,8 +115,8 @@ public class LeaderboardManager : MonoBehaviour
             levelStats.Add(new LevelStatEntry
             {
                 levelName = levelName,
-                timeSeconds = timeSeconds,
-                deaths = deaths,
+                timeSeconds = isTimeout ? 0f : timeSeconds,
+                deaths = isTimeout ? 0 : deaths,
                 isTimeout = isTimeout
             });
         }
@@ -130,47 +137,13 @@ public class LeaderboardManager : MonoBehaviour
 
     public void DistributeTimeoutLevelTimes()
     {
-        float totalBudget = GetOverallRunBudgetSeconds();
-        int timeoutCount = 0;
-        float clearedSum = 0f;
-
+        // Timed-out levels are strictly 00:00 time and 0 deaths per user specification
         foreach (var stat in levelStats)
         {
             if (stat.isTimeout)
             {
-                timeoutCount++;
-            }
-            else
-            {
-                clearedSum += stat.timeSeconds;
-            }
-        }
-
-        // If cleared time already exceeds budget, scale cleared times down to fit budget
-        if (clearedSum > totalBudget && clearedSum > 0.01f)
-        {
-            float scale = totalBudget / clearedSum;
-            foreach (var stat in levelStats)
-            {
-                if (!stat.isTimeout)
-                {
-                    stat.timeSeconds *= scale;
-                }
-            }
-            clearedSum = totalBudget;
-        }
-
-        if (timeoutCount > 0)
-        {
-            float remainingTime = Mathf.Max(0f, totalBudget - clearedSum);
-            float distributedPerLevel = remainingTime / timeoutCount;
-
-            foreach (var stat in levelStats)
-            {
-                if (stat.isTimeout)
-                {
-                    stat.timeSeconds = distributedPerLevel;
-                }
+                stat.timeSeconds = 0f;
+                stat.deaths = 0;
             }
         }
     }
@@ -184,9 +157,15 @@ public class LeaderboardManager : MonoBehaviour
         totalRunTimeouts = 0;
         foreach (var stat in levelStats)
         {
-            totalRunTime += stat.timeSeconds;
-            totalRunDeaths += stat.deaths;
-            if (stat.isTimeout) totalRunTimeouts++;
+            if (stat.isTimeout)
+            {
+                totalRunTimeouts++;
+            }
+            else
+            {
+                totalRunTime += stat.timeSeconds;
+                totalRunDeaths += stat.deaths;
+            }
         }
 
         float totalBudget = GetOverallRunBudgetSeconds();
@@ -263,10 +242,21 @@ public class LeaderboardManager : MonoBehaviour
         RecalculateTotals();
     }
 
-    public bool SaveCurrentRun(string playerName = "Player 1")
+    public bool SaveCurrentRun(string playerName = "")
     {
         if (hasSavedCurrentRun) return false;
+        // If any player has a single timeout level, they cannot be on the global leaderboard
+        if (totalRunTimeouts > 0) return false;
         if (levelStats.Count == 0 && totalRunTime <= 0f) return false;
+
+        if (string.IsNullOrWhiteSpace(playerName) || playerName == "Player 1")
+        {
+            playerName = PlayerPrefs.GetString("PlayerName", "Player");
+        }
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            playerName = "Player";
+        }
 
         float score = CalculatePerformanceScore(totalRunTime, totalRunDeaths, totalRunTimeouts);
         string grade = CalculateGrade(totalRunTime, totalRunDeaths, totalRunTimeouts);
@@ -322,6 +312,28 @@ public class LeaderboardManager : MonoBehaviour
                     leaderboardData = new LeaderboardDataWrapper();
                 }
             }
+        }
+    }
+
+    private const string LEADERBOARD_RESET_VERSION_KEY = "Leaderboard_CleanReset_v1";
+
+    public void ClearLeaderboardData()
+    {
+        leaderboardData = new LeaderboardDataWrapper();
+        if (PlayerPrefs.HasKey(PREFS_KEY))
+        {
+            PlayerPrefs.DeleteKey(PREFS_KEY);
+            PlayerPrefs.Save();
+        }
+    }
+
+    private void CheckAndPerformInitialReset()
+    {
+        if (!PlayerPrefs.HasKey(LEADERBOARD_RESET_VERSION_KEY))
+        {
+            ClearLeaderboardData();
+            PlayerPrefs.SetInt(LEADERBOARD_RESET_VERSION_KEY, 1);
+            PlayerPrefs.Save();
         }
     }
 

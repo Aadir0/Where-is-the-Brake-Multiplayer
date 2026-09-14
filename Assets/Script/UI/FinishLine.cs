@@ -157,7 +157,7 @@ public class FinishLine : MonoBehaviour
                 if (!isRecorded)
                 {
                     float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetCurrentLevelElapsedTime() : 40f;
-                    int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0;
+                    int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.LocalLevelDeaths : 0;
                     LeaderboardManager.Instance.RecordLevelCompletion(sceneName, elapsedTime, deaths, isTimeout: true);
                 }
             }
@@ -258,7 +258,7 @@ public class FinishLine : MonoBehaviour
                 singleCtrl.SetCarWon();
             }
 
-            int deaths = healthComp != null ? healthComp.deathCount.Value : (CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.deathCount.Value : 0);
+            int deaths = CarHealth.LocalPlayerHealth != null ? CarHealth.LocalPlayerHealth.LocalLevelDeaths : (healthComp != null ? healthComp.LocalLevelDeaths : 0);
             float elapsedTime = LevelTimer.Instance != null ? LevelTimer.Instance.GetCurrentLevelElapsedTime() : 0f;
             Transform playerT = carCtrl != null ? carCtrl.transform : (singleCtrl != null ? singleCtrl.transform : (netObj != null ? netObj.transform : col.transform.root));
 

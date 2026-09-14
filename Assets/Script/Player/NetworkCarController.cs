@@ -63,6 +63,10 @@ public class NetworkCarController : NetworkBehaviour
     private float surfaceDriftMultiplier = 1.0f;
     private bool isInSurfaceModifierZone = false;
 
+    [Header("Sheep Collision Debuff")]
+    private float sheepDebuffMultiplier = 1.0f;
+    private Coroutine sheepDebuffCoroutine;
+
     [Header("Jump Effect Settings")]
     [SerializeField] private float jumpDuration = 0.32f;
     [SerializeField] private float jumpCooldown = 1.5f;
@@ -998,6 +1002,69 @@ public static void UpdateAllCarsSceneVisibility()
         surfaceSpeedMultiplier = 1.0f;
         surfaceDriftMultiplier = 1.0f;
         isInSurfaceModifierZone = false;
+        sheepDebuffMultiplier = 1.0f;
+        if (sheepDebuffCoroutine != null)
+        {
+            StopCoroutine(sheepDebuffCoroutine);
+            sheepDebuffCoroutine = null;
+        }
+    }
+
+    public void ApplySheepSlowDebuff(float duration = 1.0f, float speedMultiplier = 0.45f)
+    {
+        if (sheepDebuffCoroutine != null)
+        {
+            StopCoroutine(sheepDebuffCoroutine);
+        }
+        sheepDebuffCoroutine = StartCoroutine(SheepSlowDebuffRoutine(duration, speedMultiplier));
+    }
+
+    private IEnumerator SheepSlowDebuffRoutine(float duration, float speedMultiplier)
+    {
+        sheepDebuffMultiplier = speedMultiplier;
+        yield return new WaitForSeconds(duration);
+        sheepDebuffMultiplier = 1.0f;
+        sheepDebuffCoroutine = null;
+    }
+
+    [Rpc(SendTo.Everyone, InvokePermission = RpcInvokePermission.Everyone)]
+    public void SyncSheepKnockedRpc(string sheepName, Vector3 sheepPos, Vector3 carPos, Vector2 carVel)
+    {
+        if (!IsInSameSceneAsLocalPlayer()) return;
+
+        SheepController targetSheep = null;
+        SheepController[] allSheep = UnityEngine.Object.FindObjectsByType<SheepController>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+        if (allSheep != null)
+        {
+            foreach (var s in allSheep)
+            {
+                if (s != null && s.gameObject.name == sheepName)
+                {
+                    targetSheep = s;
+                    break;
+                }
+            }
+
+            if (targetSheep == null)
+            {
+                float bestDist = 2.5f;
+                foreach (var s in allSheep)
+                {
+                    if (s == null) continue;
+                    float d = Vector3.Distance(s.transform.position, sheepPos);
+                    if (d < bestDist)
+                    {
+                        bestDist = d;
+                        targetSheep = s;
+                    }
+                }
+            }
+        }
+
+        if (targetSheep != null)
+        {
+            targetSheep.KnockFromCarHit(carPos, carVel);
+        }
     }
 
     public void EnableJump()
@@ -1331,6 +1398,10 @@ public static void UpdateAllCarsSceneVisibility()
         Vector2 forwardDirection = new Vector2(Mathf.Cos(rotationRadians), Mathf.Sin(rotationRadians));
 
         float effectiveSpeed = isInSurfaceModifierZone ? (currentSpeed * surfaceSpeedMultiplier) : currentSpeed;
+        if (sheepDebuffMultiplier < 1.0f)
+        {
+            effectiveSpeed *= sheepDebuffMultiplier;
+        }
         Vector2 desiredVelocity = forwardDirection * effectiveSpeed;
 
         float driftFactorBlend = Mathf.Lerp(driftFactor, driftIntensity, turnMagnitude);
